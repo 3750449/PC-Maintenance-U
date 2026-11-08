@@ -1,5 +1,5 @@
 PC MAINTENANCE U - START HERE
-Version 3.0.0
+Version 3.2.0
 
 NORMAL USE
 
@@ -27,7 +27,8 @@ MAIN MENU
 
 11 - External Drive Health / Diagnosis
 
-12 - Apple / Mac External Drive Reader & Rescue
+12 - Apple / Mac External Drive Reader & Rescue
+
 13 - Exit
 
 AUTOMATIC UPDATES
@@ -148,3 +149,43 @@ If Windows asks to FORMAT the Mac drive and its data matters, choose Cancel.
 PC Maintenance does not bundle proprietary APFS/HFS Windows drivers. If Windows
 detects the Apple partition but does not mount it, use a compatible reader or
 connect the drive to a Mac first.
+
+
+VERSION 3.1.0 MENU GROUPS
+
+1 - Recommended Safe Scan
+2 - System Health & Maintenance
+3 - Security & Malware Sweep
+4 - Files, Search & Conversion
+5 - Drives, Photos & Backup
+6 - Developer & Linux Tools
+7 - Speech & Accessibility
+8 - Program Updates
+9 - Exit
+
+MALWARE SWEEP
+
+Defender scans automatically attempt to update Microsoft security intelligence
+before scanning. The Security menu includes Quick, Full, Custom-folder, and
+Offline Defender scans plus an optional fresh Microsoft Safety Scanner download.
+
+No antivirus can guarantee detection of every new or zero-day threat.
+
+
+FONT SIZE / ACCESSIBILITY
+
+Open:
+7 - Speech & Accessibility
+6 - Change PC Maintenance font size
+
+Available presets:
+Small 14
+Normal 16
+Large 20
+Extra Large 24
+Huge 30
+Custom 10-40
+
+The selected PC Maintenance font size is saved in settings.json and is applied
+on future launches. Some Windows Terminal configurations manage their own font
+size; use the included Windows Text Size shortcut in that case.

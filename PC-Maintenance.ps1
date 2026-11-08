@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 
 $ErrorActionPreference = "Continue"
-$AppVersion = [version]"3.0.0"
+$AppVersion = [version]"3.2.0"
 $AppDirectory = Split-Path -Parent $PSCommandPath
 
 function Test-IsAdministrator {
@@ -66,6 +66,299 @@ function Confirm-Action {
     $answer = Read-Host "$Message [y/N]"
     return ($answer -match '^[Yy]$')
 }
+
+
+# ============================================================
+# ACCESSIBILITY / CONSOLE FONT SIZE
+# ============================================================
+
+$SettingsPath = Join-Path $AppDirectory "settings.json"
+
+function Initialize-PCMaintenanceConsoleFontApi {
+
+    if ("PCMaintenanceConsoleFont" -as [type]) {
+        return $true
+    }
+
+    $Source = @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class PCMaintenanceConsoleFont
+{
+    public const int STD_OUTPUT_HANDLE = -11;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct COORD
+    {
+        public short X;
+        public short Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct CONSOLE_FONT_INFOEX
+    {
+        public uint cbSize;
+        public uint nFont;
+        public COORD dwFontSize;
+        public int FontFamily;
+        public int FontWeight;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string FaceName;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr GetStdHandle(int nStdHandle);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern bool GetCurrentConsoleFontEx(
+        IntPtr hConsoleOutput,
+        bool bMaximumWindow,
+        ref CONSOLE_FONT_INFOEX lpConsoleCurrentFontEx
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern bool SetCurrentConsoleFontEx(
+        IntPtr hConsoleOutput,
+        bool bMaximumWindow,
+        ref CONSOLE_FONT_INFOEX lpConsoleCurrentFontEx
+    );
+}
+"@
+
+    try {
+        Add-Type -TypeDefinition $Source -ErrorAction Stop
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
+function Get-PCMaintenanceSettings {
+
+    if (-not (Test-Path -LiteralPath $SettingsPath)) {
+        return [PSCustomObject]@{
+            FontSize = 16
+        }
+    }
+
+    try {
+        $Settings = Get-Content `
+            -LiteralPath $SettingsPath `
+            -Raw `
+            -ErrorAction Stop |
+            ConvertFrom-Json `
+                -ErrorAction Stop
+
+        if ($null -eq $Settings.FontSize) {
+            $Settings | Add-Member -NotePropertyName FontSize -NotePropertyValue 16
+        }
+
+        return $Settings
+    }
+    catch {
+        return [PSCustomObject]@{
+            FontSize = 16
+        }
+    }
+}
+
+function Save-PCMaintenanceFontSize {
+
+    param(
+        [int]$Size
+    )
+
+    try {
+        [PSCustomObject]@{
+            FontSize = $Size
+        } |
+            ConvertTo-Json |
+            Set-Content `
+                -LiteralPath $SettingsPath `
+                -Encoding UTF8
+
+        return $true
+    }
+    catch {
+        Write-Warning "The font-size preference could not be saved."
+        return $false
+    }
+}
+
+function Set-PCMaintenanceConsoleFontSize {
+
+    param(
+        [ValidateRange(10, 40)]
+        [int]$Size,
+
+        [switch]$Save
+    )
+
+    if (-not (Initialize-PCMaintenanceConsoleFontApi)) {
+        Write-Warning "This console host does not expose the classic Windows console font API."
+        Write-Host "Use the Windows Text Size option instead."
+        return $false
+    }
+
+    try {
+        $Handle = [PCMaintenanceConsoleFont]::GetStdHandle(
+            [PCMaintenanceConsoleFont]::STD_OUTPUT_HANDLE
+        )
+
+        if ($Handle -eq [IntPtr]::Zero -or $Handle.ToInt64() -eq -1) {
+            throw "Could not access the console output handle."
+        }
+
+        $Info = New-Object PCMaintenanceConsoleFont+CONSOLE_FONT_INFOEX
+        $Info.cbSize = [Runtime.InteropServices.Marshal]::SizeOf($Info)
+
+        $GotFont = [PCMaintenanceConsoleFont]::GetCurrentConsoleFontEx(
+            $Handle,
+            $false,
+            [ref]$Info
+        )
+
+        if (-not $GotFont) {
+            throw "The current terminal did not return console font information."
+        }
+
+        $Info.dwFontSize.Y = [int16]$Size
+
+        $SetFont = [PCMaintenanceConsoleFont]::SetCurrentConsoleFontEx(
+            $Handle,
+            $false,
+            [ref]$Info
+        )
+
+        if (-not $SetFont) {
+            throw "The current terminal did not accept the requested font size."
+        }
+
+        if ($Save) {
+            [void](Save-PCMaintenanceFontSize -Size $Size)
+        }
+
+        return $true
+    }
+    catch {
+        Write-Warning "PC Maintenance could not resize this terminal's font directly."
+        Write-Host "Some Windows Terminal configurations control font size themselves."
+        Write-Host "Use the Windows Text Size shortcut or the terminal's own settings."
+        return $false
+    }
+}
+
+function Apply-SavedPCMaintenanceFontSize {
+
+    $Settings = Get-PCMaintenanceSettings
+
+    $SavedSize = 16
+
+    try {
+        $SavedSize = [int]$Settings.FontSize
+    }
+    catch {
+        $SavedSize = 16
+    }
+
+    if ($SavedSize -lt 10 -or $SavedSize -gt 40) {
+        $SavedSize = 16
+    }
+
+    [void](Set-PCMaintenanceConsoleFontSize -Size $SavedSize)
+}
+
+function Show-FontSizeMenu {
+
+    while ($true) {
+
+        Write-Section "FONT SIZE / ACCESSIBILITY"
+
+        $Settings = Get-PCMaintenanceSettings
+
+        Write-Host "Saved PC Maintenance font size: $($Settings.FontSize)"
+        Write-Host ""
+        Write-Host "1 - Small (14)"
+        Write-Host "2 - Normal (16)"
+        Write-Host "3 - Large (20)"
+        Write-Host "4 - Extra Large (24)"
+        Write-Host "5 - Huge (30)"
+        Write-Host "6 - Custom size (10-40)"
+        Write-Host "7 - Reset to Normal (16)"
+        Write-Host "8 - Open Windows Text Size settings"
+        Write-Host "9 - Return"
+        Write-Host ""
+
+        $FontChoice = Read-Host "Choose 1 through 9"
+
+        $RequestedSize = $null
+
+        switch ($FontChoice) {
+            "1" { $RequestedSize = 14 }
+            "2" { $RequestedSize = 16 }
+            "3" { $RequestedSize = 20 }
+            "4" { $RequestedSize = 24 }
+            "5" { $RequestedSize = 30 }
+
+            "6" {
+                $CustomText = Read-Host "Enter font size from 10 through 40"
+                $CustomSize = 0
+
+                if (
+                    [int]::TryParse($CustomText, [ref]$CustomSize) -and
+                    $CustomSize -ge 10 -and
+                    $CustomSize -le 40
+                ) {
+                    $RequestedSize = $CustomSize
+                }
+                else {
+                    Write-Warning "Font size must be a whole number from 10 through 40."
+                    Read-Host "Press Enter to continue"
+                }
+            }
+
+            "7" {
+                $RequestedSize = 16
+            }
+
+            "8" {
+                try {
+                    Start-Process "ms-settings:easeofaccess-display"
+                }
+                catch {
+                    Start-Process "ms-settings:display"
+                }
+            }
+
+            "9" {
+                return
+            }
+        }
+
+        if ($null -ne $RequestedSize) {
+
+            $Applied = Set-PCMaintenanceConsoleFontSize `
+                -Size $RequestedSize `
+                -Save
+
+            Write-Host ""
+
+            if ($Applied) {
+                Write-Host "Font size changed to $RequestedSize."
+                Write-Host "The preference will be used on future launches."
+            }
+            else {
+                Write-Host "The preference was not applied to this console host."
+            }
+
+            Read-Host "Press Enter to continue"
+        }
+    }
+}
+
 
 function Format-Bytes {
     param([long]$Bytes)
@@ -2149,6 +2442,8 @@ function Show-LinuxMaintenanceMenu {
 # SPEECH LISTENER / AUDIO INPUT
 # ============================================================
 
+Apply-SavedPCMaintenanceFontSize
+
 function Show-SpeechListenerMenu {
 
     function Show-AudioEndpoints {
@@ -2242,26 +2537,37 @@ function Show-SpeechListenerMenu {
     }
 
     while ($true) {
-        Write-Section "SPEECH LISTENER / MICROPHONE"
+        Write-Section "SPEECH & ACCESSIBILITY"
         Write-Host "1 - List built-in and attached audio endpoints"
         Write-Host "2 - Listen for 15 seconds"
         Write-Host "3 - Listen for 30 seconds"
         Write-Host "4 - Listen for 60 seconds"
         Write-Host "5 - Open Windows Sound settings to choose microphone"
-        Write-Host "6 - Return"
+        Write-Host "6 - Change PC Maintenance font size"
+        Write-Host "7 - Open Windows Text Size settings"
+        Write-Host "8 - Return"
         Write-Host ""
         Write-Host "Speech input uses the current DEFAULT Windows recording device."
         Write-Host "An attached USB/Bluetooth headset or microphone works after Windows makes it the default input."
         Write-Host ""
 
-        $Choice = Read-Host "Choose 1, 2, 3, 4, 5, or 6"
+        $Choice = Read-Host "Choose 1 through 8"
         switch ($Choice) {
             "1" { Show-AudioEndpoints; Read-Host "Press Enter to continue" }
             "2" { Invoke-SpeechListeningSession 15; Read-Host "Press Enter to continue" }
             "3" { Invoke-SpeechListeningSession 30; Read-Host "Press Enter to continue" }
             "4" { Invoke-SpeechListeningSession 60; Read-Host "Press Enter to continue" }
             "5" { Start-Process "ms-settings:sound" }
-            "6" { return }
+            "6" { Show-FontSizeMenu }
+            "7" {
+                try {
+                    Start-Process "ms-settings:easeofaccess-display"
+                }
+                catch {
+                    Start-Process "ms-settings:display"
+                }
+            }
+            "8" { return }
         }
     }
 }
@@ -3640,103 +3946,657 @@ function Show-AppleDriveReaderMenu {
     }
 }
 
-Clear-Host
-Write-Host "============================================================"
-Write-Host "          DESMOND PC MAINTENANCE $AppVersion"
-Write-Host "============================================================"
-Write-Host ""
-Write-Host "1 - Scan Only"
-Write-Host "2 - Standard Maintenance"
-Write-Host "3 - Full Maintenance"
-Write-Host "4 - Check for Program Updates"
-Write-Host "5 - File Conversion"
-Write-Host "6 - Deep File Search / Lost File Finder"
-Write-Host "7 - Project / Code Search"
-Write-Host "8 - WSL / Linux Terminal Maintenance"
-Write-Host "9 - Speech Listener / Microphone"
-Write-Host "10 - Drive Photo Search / Desktop Backup"
-Write-Host "11 - External Drive Health / Diagnosis"
-Write-Host "12 - Apple / Mac External Drive Reader & Rescue"
-Write-Host "13 - Exit"
-Write-Host ""
 
-do {
-    $Choice = Read-Host "Choose 1 through 13"
-} until ($Choice -in @("1","2","3","4","5","6","7","8","9","10","11","12","13"))
+# ============================================================
+# SECURITY / MALWARE SWEEP
+# ============================================================
 
-if ($Choice -eq "13") {
-    try { Stop-Transcript | Out-Null } catch {}
-    exit
+function Get-RegisteredAntivirusProducts {
+
+    try {
+        return @(
+            Get-CimInstance `
+                -Namespace root/SecurityCenter2 `
+                -ClassName AntiVirusProduct `
+                -ErrorAction Stop
+        )
+    }
+    catch {
+        return @()
+    }
 }
 
-if ($Choice -eq "12") {
-    Show-AppleDriveReaderMenu
-    try { Stop-Transcript | Out-Null } catch {}
-    exit
+function Show-MalwareProtectionStatus {
+
+    Write-Section "SECURITY / MALWARE PROTECTION STATUS"
+
+    $Products = @(Get-RegisteredAntivirusProducts)
+
+    if ($Products.Count -gt 0) {
+        Write-Host "Registered antivirus products:"
+        Write-Host ""
+
+        $Products |
+            Select-Object `
+                displayName,
+                pathToSignedProductExe,
+                pathToSignedReportingExe |
+            Format-Table -AutoSize
+    }
+    else {
+        Write-Host "No antivirus products were returned by Windows Security Center."
+    }
+
+    Write-Host ""
+
+    if (-not (Get-Command Get-MpComputerStatus -ErrorAction SilentlyContinue)) {
+        Write-Warning "Microsoft Defender PowerShell commands are unavailable on this system."
+        return
+    }
+
+    try {
+        $Status = Get-MpComputerStatus
+        $Preference = Get-MpPreference -ErrorAction SilentlyContinue
+
+        Write-Host "Microsoft Defender:"
+        Write-Host ""
+        Write-Host "Running mode:             $($Status.AMRunningMode)"
+        Write-Host "Antivirus enabled:        $($Status.AntivirusEnabled)"
+        Write-Host "Real-time protection:     $($Status.RealTimeProtectionEnabled)"
+        Write-Host "Behavior monitoring:      $($Status.BehaviorMonitorEnabled)"
+        Write-Host "IOAV protection:          $($Status.IoavProtectionEnabled)"
+        Write-Host "Network inspection:       $($Status.NISEnabled)"
+        Write-Host "Tamper protection:        $($Status.IsTamperProtected)"
+        Write-Host "Signature version:        $($Status.AntivirusSignatureVersion)"
+        Write-Host "Signature last updated:   $($Status.AntivirusSignatureLastUpdated)"
+        Write-Host "Engine version:           $($Status.AMEngineVersion)"
+        Write-Host "Platform/client version:  $($Status.AMProductVersion)"
+
+        if ($null -ne $Preference) {
+            Write-Host "PUA protection setting:   $($Preference.PUAProtection)"
+            Write-Host "MAPS/cloud setting:       $($Preference.MAPSReporting)"
+            Write-Host "Pre-scan signature check: $($Preference.CheckForSignaturesBeforeRunningScan)"
+            Write-Host "Archive scanning disabled:$($Preference.DisableArchiveScanning)"
+        }
+
+        Write-Host ""
+        Write-Host "Note: a current signature version reduces risk, but no antivirus can"
+        Write-Host "guarantee detection of every brand-new or zero-day threat."
+    }
+    catch {
+        Write-Warning "Could not read Microsoft Defender status."
+        Write-Warning $_.Exception.Message
+    }
 }
 
-if ($Choice -eq "11") {
-    Show-ExternalDriveHealthMenu
-    try { Stop-Transcript | Out-Null } catch {}
-    exit
+function Update-DefenderIntelligence {
+
+    Write-Host ""
+    Write-Host "Refreshing Microsoft Defender security intelligence..."
+    Write-Host ""
+
+    if (-not (Get-Command Update-MpSignature -ErrorAction SilentlyContinue)) {
+        Write-Warning "Update-MpSignature is unavailable."
+        return $false
+    }
+
+    try {
+        Update-MpSignature -ErrorAction Stop
+
+        $Status = Get-MpComputerStatus -ErrorAction SilentlyContinue
+
+        Write-Host ""
+        Write-Host "Security intelligence update completed."
+
+        if ($null -ne $Status) {
+            Write-Host "Signature version:      $($Status.AntivirusSignatureVersion)"
+            Write-Host "Signature last updated: $($Status.AntivirusSignatureLastUpdated)"
+        }
+
+        return $true
+    }
+    catch {
+        Write-Warning "Defender security intelligence could not be updated."
+        Write-Warning $_.Exception.Message
+        Write-Host ""
+        Write-Host "The scan can still use the definitions already installed, but they"
+        Write-Host "may not be the newest definitions available."
+        return $false
+    }
 }
 
-if ($Choice -eq "10") {
-    Show-DrivePhotoSearchMenu
-    try { Stop-Transcript | Out-Null } catch {}
-    exit
+function Enable-RecommendedDefenderScanSettings {
+
+    Write-Section "RECOMMENDED DEFENDER SCAN SETTINGS"
+
+    if (-not (Get-Command Set-MpPreference -ErrorAction SilentlyContinue)) {
+        Write-Warning "Microsoft Defender preference commands are unavailable."
+        return
+    }
+
+    Write-Host "This enables:"
+    Write-Host "- potentially unwanted application (PUA) protection"
+    Write-Host "- archive scanning"
+    Write-Host "- a signature-update check before scheduled scans"
+    Write-Host ""
+    Write-Host "It does not disable a third-party antivirus and does not change"
+    Write-Host "sample-submission/privacy settings."
+    Write-Host ""
+
+    if (-not (Confirm-Action "Apply these recommended Defender scan settings?")) {
+        return
+    }
+
+    try {
+        Set-MpPreference -PUAProtection Enabled -ErrorAction Stop
+        Set-MpPreference -DisableArchiveScanning $false -ErrorAction Stop
+        Set-MpPreference -CheckForSignaturesBeforeRunningScan $true -ErrorAction Stop
+
+        Write-Host ""
+        Write-Host "Recommended Defender scan settings applied."
+    }
+    catch {
+        Write-Warning "One or more settings could not be changed."
+        Write-Warning $_.Exception.Message
+    }
 }
 
-if ($Choice -eq "9") {
-    Show-SpeechListenerMenu
-    try { Stop-Transcript | Out-Null } catch {}
-    exit
+function Invoke-DefenderMalwareScan {
+
+    param(
+        [ValidateSet("Quick","Full","Custom")]
+        [string]$Type
+    )
+
+    if (-not (Get-Command Start-MpScan -ErrorAction SilentlyContinue)) {
+        Write-Warning "Microsoft Defender scanning commands are unavailable."
+        return
+    }
+
+    try {
+        $Status = Get-MpComputerStatus -ErrorAction Stop
+
+        if (-not $Status.AntivirusEnabled) {
+            Write-Warning "Microsoft Defender Antivirus is not currently enabled as an active antivirus."
+            Write-Host "A third-party antivirus may be active."
+            Write-Host ""
+            return
+        }
+    }
+    catch {
+        Write-Warning "Could not verify Defender Antivirus status."
+    }
+
+    [void](Update-DefenderIntelligence)
+
+    Write-Host ""
+
+    try {
+
+        if ($Type -eq "Quick") {
+            Write-Host "Starting Microsoft Defender Quick Scan..."
+            Start-MpScan -ScanType QuickScan -ErrorAction Stop
+        }
+        elseif ($Type -eq "Full") {
+            Write-Host "Starting Microsoft Defender Full Scan..."
+            Write-Host "This can take a long time on systems with large drives."
+            Start-MpScan -ScanType FullScan -ErrorAction Stop
+        }
+        elseif ($Type -eq "Custom") {
+
+            Add-Type -AssemblyName System.Windows.Forms
+
+            $Dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+            $Dialog.Description = "Choose a folder to scan for malware"
+            $Dialog.ShowNewFolderButton = $false
+
+            if ($Dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+                return
+            }
+
+            $ScanPath = $Dialog.SelectedPath
+
+            Write-Host "Starting custom Defender scan:"
+            Write-Host "  $ScanPath"
+
+            Start-MpScan `
+                -ScanType CustomScan `
+                -ScanPath $ScanPath `
+                -ErrorAction Stop
+        }
+
+        Write-Host ""
+        Write-Host "Defender scan command completed."
+    }
+    catch {
+        Write-Warning "The Defender scan could not be completed."
+        Write-Warning $_.Exception.Message
+    }
 }
 
-if ($Choice -eq "8") {
-    Show-LinuxMaintenanceMenu
-    try { Stop-Transcript | Out-Null } catch {}
-    exit
+function Show-RecentDefenderThreats {
+
+    Write-Section "RECENT DEFENDER THREATS"
+
+    if (-not (Get-Command Get-MpThreatDetection -ErrorAction SilentlyContinue)) {
+        Write-Warning "Defender threat-history commands are unavailable."
+        return
+    }
+
+    try {
+        $Threats = @(
+            Get-MpThreatDetection -ErrorAction Stop |
+                Sort-Object InitialDetectionTime -Descending |
+                Select-Object -First 50
+        )
+
+        if ($Threats.Count -eq 0) {
+            Write-Host "No threat detections were returned."
+            return
+        }
+
+        $Threats |
+            Select-Object `
+                InitialDetectionTime,
+                ThreatID,
+                ActionSuccess,
+                CurrentThreatExecutionStatusID,
+                Resources |
+            Format-List
+    }
+    catch {
+        Write-Warning "Could not read Defender threat history."
+        Write-Warning $_.Exception.Message
+    }
 }
 
-if ($Choice -eq "7") {
-    Show-ProjectCodeSearchMenu
-    try { Stop-Transcript | Out-Null } catch {}
-    exit
+function Invoke-DefenderOfflineSweep {
+
+    Write-Section "MICROSOFT DEFENDER OFFLINE SCAN"
+
+    if (-not (Get-Command Start-MpWDOScan -ErrorAction SilentlyContinue)) {
+        Write-Warning "Microsoft Defender Offline scan is unavailable on this system."
+        return
+    }
+
+    Write-Host "Defender Offline Scan restarts the PC and scans outside the normal"
+    Write-Host "Windows desktop. This can help with persistent malware/rootkits."
+    Write-Host ""
+    Write-Host "SAVE ALL WORK before continuing."
+    Write-Host ""
+
+    if (-not (Confirm-Action "Update security intelligence and restart for an Offline Scan?")) {
+        return
+    }
+
+    [void](Update-DefenderIntelligence)
+
+    try {
+        Start-MpWDOScan -ErrorAction Stop
+    }
+    catch {
+        Write-Warning "Could not start Microsoft Defender Offline Scan."
+        Write-Warning $_.Exception.Message
+    }
 }
 
-if ($Choice -eq "6") {
-    Show-FileSearchMenu
-    try { Stop-Transcript | Out-Null } catch {}
-    exit
+function Invoke-FreshMicrosoftSafetyScanner {
+
+    Write-Section "FRESH MICROSOFT SAFETY SCANNER"
+
+    Write-Host "This downloads a NEW copy directly from Microsoft's official"
+    Write-Host "Safety Scanner download endpoint each time."
+    Write-Host ""
+    Write-Host "The downloaded executable is checked for a valid Microsoft"
+    Write-Host "Authenticode signature before it is allowed to run."
+    Write-Host ""
+
+    if (-not (Confirm-Action "Download and run the latest Microsoft Safety Scanner?")) {
+        return
+    }
+
+    $Is64Bit = [Environment]::Is64BitOperatingSystem
+
+    if ($Is64Bit) {
+        $DownloadUrl = "https://go.microsoft.com/fwlink/?LinkId=212732"
+    }
+    else {
+        $DownloadUrl = "https://go.microsoft.com/fwlink/?LinkId=212733"
+    }
+
+    $TempFolder = Join-Path $env:TEMP ("PC-Maintenance-Malware-" + [guid]::NewGuid().ToString())
+    $ScannerPath = Join-Path $TempFolder "msert.exe"
+
+    try {
+        New-Item -ItemType Directory -Path $TempFolder -Force -ErrorAction Stop | Out-Null
+
+        Write-Host ""
+        Write-Host "Downloading latest Microsoft Safety Scanner..."
+
+        Invoke-WebRequest `
+            -Uri $DownloadUrl `
+            -OutFile $ScannerPath `
+            -UseBasicParsing `
+            -ErrorAction Stop
+
+        Write-Host "Verifying Microsoft digital signature..."
+
+        $Signature = Get-AuthenticodeSignature -FilePath $ScannerPath
+
+        $SignerSubject = ""
+        if ($null -ne $Signature.SignerCertificate) {
+            $SignerSubject = [string]$Signature.SignerCertificate.Subject
+        }
+
+        if (
+            $Signature.Status -ne "Valid" -or
+            $SignerSubject -notmatch 'Microsoft'
+        ) {
+            throw "The downloaded scanner did not pass Microsoft Authenticode verification."
+        }
+
+        Write-Host ""
+        Write-Host "Signature valid."
+        Write-Host "Launching Microsoft Safety Scanner..."
+        Write-Host ""
+
+        Start-Process `
+            -FilePath $ScannerPath `
+            -Wait `
+            -ErrorAction Stop
+
+        Write-Host ""
+        Write-Host "Safety Scanner finished."
+        Write-Host "Microsoft's detailed log is normally stored at:"
+        Write-Host "  $env:SystemRoot\debug\msert.log"
+    }
+    catch {
+        Write-Warning "Microsoft Safety Scanner could not be downloaded or run."
+        Write-Warning $_.Exception.Message
+    }
+    finally {
+        try {
+            Remove-Item `
+                -LiteralPath $TempFolder `
+                -Recurse `
+                -Force `
+                -ErrorAction SilentlyContinue
+        }
+        catch {
+        }
+    }
 }
 
-if ($Choice -eq "5") {
-    Show-FileConversionMenu
-    try { Stop-Transcript | Out-Null } catch {}
-    exit
+function Show-MalwareSweepMenu {
+
+    while ($true) {
+
+        Write-Section "SECURITY & MALWARE SWEEP"
+
+        Write-Host "Every Defender scan below attempts to refresh Microsoft's"
+        Write-Host "security intelligence before the scan starts."
+        Write-Host ""
+        Write-Host "1 - Security / antivirus status"
+        Write-Host "2 - Update Defender security intelligence now"
+        Write-Host "3 - Quick Malware Sweep"
+        Write-Host "4 - Full Malware Sweep"
+        Write-Host "5 - Custom Folder Malware Sweep"
+        Write-Host "6 - Recent Defender threat detections"
+        Write-Host "7 - Microsoft Defender Offline Scan (restarts PC)"
+        Write-Host "8 - Fresh Microsoft Safety Scanner (second opinion)"
+        Write-Host "9 - Apply recommended Defender scan settings"
+        Write-Host "10 - Open Windows Security"
+        Write-Host "11 - Return"
+        Write-Host ""
+
+        $SecurityChoice = Read-Host "Choose 1 through 11"
+
+        switch ($SecurityChoice) {
+
+            "1" {
+                Show-MalwareProtectionStatus
+                Read-Host "Press Enter to continue"
+            }
+
+            "2" {
+                [void](Update-DefenderIntelligence)
+                Read-Host "Press Enter to continue"
+            }
+
+            "3" {
+                Invoke-DefenderMalwareScan -Type Quick
+                Read-Host "Press Enter to continue"
+            }
+
+            "4" {
+                Invoke-DefenderMalwareScan -Type Full
+                Read-Host "Press Enter to continue"
+            }
+
+            "5" {
+                Invoke-DefenderMalwareScan -Type Custom
+                Read-Host "Press Enter to continue"
+            }
+
+            "6" {
+                Show-RecentDefenderThreats
+                Read-Host "Press Enter to continue"
+            }
+
+            "7" {
+                Invoke-DefenderOfflineSweep
+            }
+
+            "8" {
+                Invoke-FreshMicrosoftSafetyScanner
+                Read-Host "Press Enter to continue"
+            }
+
+            "9" {
+                Enable-RecommendedDefenderScanSettings
+                Read-Host "Press Enter to continue"
+            }
+
+            "10" {
+                Start-Process "windowsdefender:"
+            }
+
+            "11" {
+                return
+            }
+        }
+    }
 }
 
-if ($Choice -eq "4") {
+# ============================================================
+# CLEAN GROUPED MAIN MENUS
+# ============================================================
+
+function Show-SystemMaintenanceMenu {
+
+    while ($true) {
+
+        Write-Section "SYSTEM HEALTH & MAINTENANCE"
+
+        Write-Host "1 - Scan Only"
+        Write-Host "2 - Standard Maintenance"
+        Write-Host "3 - Full Maintenance"
+        Write-Host "4 - Return"
+        Write-Host ""
+
+        $MaintenanceChoice = Read-Host "Choose 1, 2, 3, or 4"
+
+        if ($MaintenanceChoice -in @("1","2","3")) {
+            return $MaintenanceChoice
+        }
+
+        if ($MaintenanceChoice -eq "4") {
+            return $null
+        }
+    }
+}
+
+function Show-FilesToolsMenu {
+
+    while ($true) {
+
+        Write-Section "FILES, SEARCH & CONVERSION"
+
+        Write-Host "1 - File Conversion / Publisher Rescue"
+        Write-Host "2 - Deep File Search / Lost File Finder"
+        Write-Host "3 - Return"
+        Write-Host ""
+
+        $FilesChoice = Read-Host "Choose 1, 2, or 3"
+
+        switch ($FilesChoice) {
+            "1" { Show-FileConversionMenu }
+            "2" { Show-FileSearchMenu }
+            "3" { return }
+        }
+    }
+}
+
+function Show-DriveBackupToolsMenu {
+
+    while ($true) {
+
+        Write-Section "DRIVES, PHOTOS & BACKUP"
+
+        Write-Host "1 - Drive Photo Search / Desktop Backup"
+        Write-Host "2 - External Drive Health / Diagnosis"
+        Write-Host "3 - Apple / Mac External Drive Reader & Rescue"
+        Write-Host "4 - Return"
+        Write-Host ""
+
+        $DriveToolsChoice = Read-Host "Choose 1, 2, 3, or 4"
+
+        switch ($DriveToolsChoice) {
+            "1" { Show-DrivePhotoSearchMenu }
+            "2" { Show-ExternalDriveHealthMenu }
+            "3" { Show-AppleDriveReaderMenu }
+            "4" { return }
+        }
+    }
+}
+
+function Show-DeveloperToolsMenu {
+
+    while ($true) {
+
+        Write-Section "DEVELOPER & LINUX TOOLS"
+
+        Write-Host "1 - Project / Code Search"
+        Write-Host "2 - WSL / Linux Terminal Maintenance"
+        Write-Host "3 - Return"
+        Write-Host ""
+
+        $DevChoice = Read-Host "Choose 1, 2, or 3"
+
+        switch ($DevChoice) {
+            "1" { Show-ProjectCodeSearchMenu }
+            "2" { Show-LinuxMaintenanceMenu }
+            "3" { return }
+        }
+    }
+}
+
+function Invoke-ManualProgramUpdater {
+
     $Updater = Join-Path $AppDirectory "Update-PC-Maintenance.ps1"
 
     if (-not (Test-Path -LiteralPath $Updater)) {
-        Write-Host ""
         Write-Warning "Update-PC-Maintenance.ps1 is missing from this folder."
         Write-Host "Keep all PC Maintenance files together in the same folder."
-        Write-Host ""
-        Read-Host "Press Enter to close"
-        try { Stop-Transcript | Out-Null } catch {}
-        exit
+        Read-Host "Press Enter to continue"
+        return
     }
 
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Updater -AppDirectory $AppDirectory
+    & powershell.exe `
+        -NoProfile `
+        -ExecutionPolicy Bypass `
+        -File $Updater `
+        -AppDirectory $AppDirectory
+
     Write-Host ""
-    Write-Host "If an update was installed, close this window and run PC Maintenance again."
+    Write-Host "If an update was installed, restart PC Maintenance to use it."
     Write-Host ""
-    Read-Host "Press Enter to close"
-    try { Stop-Transcript | Out-Null } catch {}
-    exit
+
+    Read-Host "Press Enter to continue"
+}
+
+Clear-Host
+
+$Choice = $null
+
+while ($null -eq $Choice) {
+
+    Write-Host "============================================================"
+    Write-Host "          DESMOND PC MAINTENANCE $AppVersion"
+    Write-Host "============================================================"
+    Write-Host ""
+    Write-Host "1 - Recommended Safe Scan"
+    Write-Host "2 - System Health & Maintenance"
+    Write-Host "3 - Security & Malware Sweep"
+    Write-Host "4 - Files, Search & Conversion"
+    Write-Host "5 - Drives, Photos & Backup"
+    Write-Host "6 - Developer & Linux Tools"
+    Write-Host "7 - Speech & Accessibility"
+    Write-Host "8 - Program Updates"
+    Write-Host "9 - Exit"
+    Write-Host ""
+
+    $MainChoice = Read-Host "Choose 1 through 9"
+
+    switch ($MainChoice) {
+
+        "1" {
+            $Choice = "1"
+        }
+
+        "2" {
+            $SelectedMaintenance = Show-SystemMaintenanceMenu
+
+            if ($SelectedMaintenance -in @("1","2","3")) {
+                $Choice = $SelectedMaintenance
+            }
+        }
+
+        "3" {
+            Show-MalwareSweepMenu
+            Clear-Host
+        }
+
+        "4" {
+            Show-FilesToolsMenu
+            Clear-Host
+        }
+
+        "5" {
+            Show-DriveBackupToolsMenu
+            Clear-Host
+        }
+
+        "6" {
+            Show-DeveloperToolsMenu
+            Clear-Host
+        }
+
+        "7" {
+            Show-SpeechListenerMenu
+            Clear-Host
+        }
+
+        "8" {
+            Invoke-ManualProgramUpdater
+            Clear-Host
+        }
+
+        "9" {
+            try { Stop-Transcript | Out-Null } catch {}
+            exit
+        }
+    }
 }
 
 $ScanOnly = ($Choice -eq "1")
