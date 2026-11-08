@@ -1,0 +1,27 @@
+PC MAINTENANCE - START HERE
+
+FOR A FAMILY MEMBER / GRANDPARENT
+1. Copy this whole folder to the Windows computer.
+2. Double-click Install-PC-Maintenance.bat.
+3. A "PC Maintenance" shortcut will be created on the Desktop.
+4. Open that shortcut and choose "1 - Quick Scan (Recommended)".
+5. To update later, open PC Maintenance and choose "4 - Check for Program Updates".
+
+PORTABLE / USB USE
+- Do not install anything.
+- Keep the whole folder together.
+- Double-click Run-PC-Maintenance.bat directly from the folder or USB drive.
+
+GITHUB UPDATE REPOSITORY
+The updater is configured for:
+https://github.com/3750449/Windows-PC-Maintenance
+
+The GitHub repository must be PUBLIC for update-without-login to work.
+Upload the files from this folder to the repository root.
+When publishing a new version:
+1. Change $AppVersion inside PC-Maintenance.ps1.
+2. Change version.txt to exactly the same version.
+3. Commit/push both changes to the main branch.
+
+The updater downloads the repository over HTTPS, syntax-checks PowerShell files,
+backs up the installed program files, and only then replaces them.
