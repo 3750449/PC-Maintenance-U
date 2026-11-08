@@ -1,40 +1,96 @@
-PC MAINTENANCE - START HERE
+PC MAINTENANCE U - START HERE
+Version 2.6.0
 
 NORMAL USE
-1. Extract this whole folder from the ZIP.
-2. Open the folder.
-3. Double-click Run-PC-Maintenance.bat.
-4. Approve the Windows administrator prompt.
-5. Pick an option from the menu.
 
-NO INSTALLER IS REQUIRED.
+1. Download the ZIP.
+2. Right-click the ZIP and choose Extract All.
+3. Open the extracted folder.
+4. Double-click Run-PC-Maintenance.bat.
+5. Approve the Windows administrator/UAC prompt.
+6. Choose an option from the menu.
+
 NO GIT INSTALLATION IS REQUIRED.
 
-Keep these files together in the same folder:
-- PC-Maintenance.ps1
-- Run-PC-Maintenance.bat
-- Update-PC-Maintenance.ps1
-- version.txt
+MAIN MENU
 
-UPDATES
-Choose option 4 inside PC Maintenance.
-The program checks:
+1 - Scan Only
+2 - Standard Maintenance
+3 - Full Maintenance
+4 - Check for Program Updates
+5 - File Conversion
+6 - Deep File Search / Lost File Finder
+7 - Exit
+
+AUTOMATIC UPDATES
+
+Run-PC-Maintenance.bat checks:
 https://github.com/3750449/PC-Maintenance-U
 
-For one-click family updates, that GitHub repository must be public.
+If version.txt on GitHub contains a newer version, the update is downloaded,
+validated, backed up, and installed before PC Maintenance starts.
 
-GITHUB REPOSITORY SETUP
-Upload the files from this folder to the ROOT of the main branch of:
-https://github.com/3750449/PC-Maintenance-U
+MICROSOFT PUBLISHER RESCUE
 
-Required repository-root files:
+Version 2.6.0 adds dedicated Microsoft Publisher .pub support.
+
+File Conversion -> Microsoft Publisher Rescue can:
+- Convert one .pub file to PDF
+- Convert one .pub file to XPS when Microsoft Publisher is installed
+- Convert one .pub file to DOCX as a best-effort editing copy
+- Batch convert a folder (and optionally subfolders) of .pub files to PDF
+
+The program tries Microsoft Publisher first when available. For PDF/ODG it can
+fall back to LibreOffice when LibreOffice supports that Publisher file. DOCX is
+created through a PDF intermediate and Microsoft Word, so complex page layouts
+can change.
+
+Deep File Search / Lost File Finder now includes:
+- Find Microsoft Publisher Files (.pub)
+
+That search can scan your user folder, all accessible drives, or a chosen folder.
+It can help locate Publisher files that were moved into unexpected folders.
+
+GENERAL FILE CONVERSION
+
+The converter is engine-based. Built-in Windows support handles common images,
+CSV/JSON, text-like files, and Office-to-PDF when Microsoft Office is installed.
+
+If these programs are installed, PC Maintenance automatically uses them:
+- FFmpeg: broad audio/video conversion
+- ImageMagick: broad image conversion
+- LibreOffice: broad office/document conversion and some Publisher imports
+- Pandoc: document/text/markup conversion
+- 7-Zip: archive extraction/repacking to ZIP
+
+No converter can safely convert every possible proprietary file format. If no
+safe conversion engine is available, the original file is left untouched.
+
+DEEP FILE SEARCH / LOST FILE FINDER
+
+The search tool can:
+- Search your user folder or all accessible drives
+- Search hidden files
+- Search partial filenames
+- Search wildcards
+- Fuzzy-rank approximate/misspelled filenames
+- Use an old full path as a clue
+- Filter by extension
+- Filter by minimum/maximum size
+- Use approximate size as a ranking clue
+- Filter by modified date
+- Find recently modified files when the filename is unknown
+- Find Microsoft Publisher .pub files specifically
+- Save complete search results to CSV
+- Reveal a selected result directly in Windows Explorer
+- Skip reparse-point directory loops
+
+This is a file finder, not deleted-file recovery software. A file that has been
+permanently deleted may require a separate recovery tool.
+
+KEEP THESE FILES TOGETHER
+
 PC-Maintenance.ps1
 Run-PC-Maintenance.bat
 Update-PC-Maintenance.ps1
 version.txt
-
-When publishing a future update:
-1. Change $AppVersion near the top of PC-Maintenance.ps1.
-2. Change version.txt to the same version number.
-3. Upload/commit the changed files to the main branch.
-4. Users choose option 4 to update.
