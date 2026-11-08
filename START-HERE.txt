@@ -1,27 +1,40 @@
 PC MAINTENANCE - START HERE
 
-FOR A FAMILY MEMBER / GRANDPARENT
-1. Copy this whole folder to the Windows computer.
-2. Double-click Install-PC-Maintenance.bat.
-3. A "PC Maintenance" shortcut will be created on the Desktop.
-4. Open that shortcut and choose "1 - Quick Scan (Recommended)".
-5. To update later, open PC Maintenance and choose "4 - Check for Program Updates".
+NORMAL USE
+1. Extract this whole folder from the ZIP.
+2. Open the folder.
+3. Double-click Run-PC-Maintenance.bat.
+4. Approve the Windows administrator prompt.
+5. Pick an option from the menu.
 
-PORTABLE / USB USE
-- Do not install anything.
-- Keep the whole folder together.
-- Double-click Run-PC-Maintenance.bat directly from the folder or USB drive.
+NO INSTALLER IS REQUIRED.
+NO GIT INSTALLATION IS REQUIRED.
 
-GITHUB UPDATE REPOSITORY
-The updater is configured for:
-https://github.com/3750449/Windows-PC-Maintenance
+Keep these files together in the same folder:
+- PC-Maintenance.ps1
+- Run-PC-Maintenance.bat
+- Update-PC-Maintenance.ps1
+- version.txt
 
-The GitHub repository must be PUBLIC for update-without-login to work.
-Upload the files from this folder to the repository root.
-When publishing a new version:
-1. Change $AppVersion inside PC-Maintenance.ps1.
-2. Change version.txt to exactly the same version.
-3. Commit/push both changes to the main branch.
+UPDATES
+Choose option 4 inside PC Maintenance.
+The program checks:
+https://github.com/3750449/PC-Maintenance-U
 
-The updater downloads the repository over HTTPS, syntax-checks PowerShell files,
-backs up the installed program files, and only then replaces them.
+For one-click family updates, that GitHub repository must be public.
+
+GITHUB REPOSITORY SETUP
+Upload the files from this folder to the ROOT of the main branch of:
+https://github.com/3750449/PC-Maintenance-U
+
+Required repository-root files:
+PC-Maintenance.ps1
+Run-PC-Maintenance.bat
+Update-PC-Maintenance.ps1
+version.txt
+
+When publishing a future update:
+1. Change $AppVersion near the top of PC-Maintenance.ps1.
+2. Change version.txt to the same version number.
+3. Upload/commit the changed files to the main branch.
+4. Users choose option 4 to update.

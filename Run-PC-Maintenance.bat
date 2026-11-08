@@ -1,5 +1,5 @@
 @echo off
 setlocal
-set "APPDIR=%~dp0"
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%APPDIR%PC-Maintenance.ps1"
-endlocal
+cd /d "%~dp0"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0PC-Maintenance.ps1"
+pause

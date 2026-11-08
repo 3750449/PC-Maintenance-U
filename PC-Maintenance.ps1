@@ -1,6 +1,8 @@
 ﻿#requires -Version 5.1
 
 $ErrorActionPreference = "Continue"
+$AppVersion = [version]"2.2.0"
+$AppDirectory = Split-Path -Parent $PSCommandPath
 
 function Test-IsAdministrator {
     $principal = New-Object Security.Principal.WindowsPrincipal(
@@ -20,13 +22,10 @@ if (-not (Test-IsAdministrator)) {
     exit
 }
 
-$AppVersion = [version]"2.1.0"
-$AppRoot = $PSScriptRoot
-
 try { $Host.UI.RawUI.WindowTitle = "Desmond PC Maintenance $AppVersion" } catch {}
 
-$Documents = [Environment]::GetFolderPath("MyDocuments")
-$Root = Join-Path $Documents "Desmond-PC-Maintenance"
+$Desktop = [Environment]::GetFolderPath("Desktop")
+$Root = Join-Path $Desktop "Desmond-PC-Maintenance"
 $Reports = Join-Path $Root "Reports"
 $Backups = Join-Path $Root "Backups"
 New-Item -ItemType Directory -Path $Reports -Force | Out-Null
@@ -111,53 +110,40 @@ Write-Host "============================================================"
 Write-Host "          DESMOND PC MAINTENANCE $AppVersion"
 Write-Host "============================================================"
 Write-Host ""
-Write-Host "1 - Quick Scan (Recommended)"
-Write-Host "    Checks the computer and creates a report."
-Write-Host ""
+Write-Host "1 - Scan Only"
 Write-Host "2 - Standard Maintenance"
-Write-Host "    Repairs Windows and offers safe cleanup choices."
-Write-Host ""
 Write-Host "3 - Full Maintenance"
-Write-Host "    Adds optional advanced cleanup and updates."
-Write-Host ""
 Write-Host "4 - Check for Program Updates"
-Write-Host "    Downloads the newest version from GitHub."
-Write-Host ""
-Write-Host "5 - Open Reports"
-Write-Host ""
-Write-Host "6 - Exit"
+Write-Host "5 - Exit"
 Write-Host ""
 
 do {
-    $Choice = Read-Host "Choose 1, 2, 3, 4, 5, or 6"
-} until ($Choice -in @("1","2","3","4","5","6"))
-
-if ($Choice -eq "4") {
-    try { Stop-Transcript | Out-Null } catch {}
-
-    $Updater = Join-Path $AppRoot "Update-PC-Maintenance.ps1"
-
-    if (-not (Test-Path -LiteralPath $Updater)) {
-        Write-Host ""
-        Write-Host "Updater file not found:"
-        Write-Host $Updater
-        Write-Host ""
-        Write-Host "Reinstall the PC Maintenance package to restore it."
-        Read-Host "Press Enter to close"
-        exit
-    }
-
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Updater -AppRoot $AppRoot
-    exit
-}
+    $Choice = Read-Host "Choose 1, 2, 3, 4, or 5"
+} until ($Choice -in @("1","2","3","4","5"))
 
 if ($Choice -eq "5") {
     try { Stop-Transcript | Out-Null } catch {}
-    Start-Process explorer.exe "`"$Reports`""
     exit
 }
 
-if ($Choice -eq "6") {
+if ($Choice -eq "4") {
+    $Updater = Join-Path $AppDirectory "Update-PC-Maintenance.ps1"
+
+    if (-not (Test-Path -LiteralPath $Updater)) {
+        Write-Host ""
+        Write-Warning "Update-PC-Maintenance.ps1 is missing from this folder."
+        Write-Host "Keep all PC Maintenance files together in the same folder."
+        Write-Host ""
+        Read-Host "Press Enter to close"
+        try { Stop-Transcript | Out-Null } catch {}
+        exit
+    }
+
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Updater -AppDirectory $AppDirectory
+    Write-Host ""
+    Write-Host "If an update was installed, close this window and run PC Maintenance again."
+    Write-Host ""
+    Read-Host "Press Enter to close"
     try { Stop-Transcript | Out-Null } catch {}
     exit
 }
@@ -713,7 +699,6 @@ $script:Results | Format-Table Component, Status, Details -AutoSize
 $script:Results | Export-Csv -Path $SummaryPath -NoTypeInformation
 
 Write-Host ""
-Write-Host "Version: $AppVersion"
 Write-Host "Reports: $Reports"
 Write-Host "Backups: $Backups"
 Write-Host "Summary: $SummaryPath"
