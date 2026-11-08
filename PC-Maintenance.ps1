@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 
 $ErrorActionPreference = "Continue"
-$AppVersion = [version]"2.6.0"
+$AppVersion = [version]"3.0.0"
 $AppDirectory = Split-Path -Parent $PSCommandPath
 
 function Test-IsAdministrator {
@@ -1752,6 +1752,1894 @@ function Show-FileSearchMenu {
 }
 
 
+# ============================================================
+# PROJECT / CODE SEARCH
+# ============================================================
+
+function Show-ProjectCodeSearchMenu {
+
+    function Get-SearchRoots {
+        param([string]$ScopeChoice)
+
+        if ($ScopeChoice -eq "1") {
+            return @($env:USERPROFILE)
+        }
+
+        if ($ScopeChoice -eq "2") {
+            return @(
+                Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Root -and (Test-Path -LiteralPath $_.Root) } |
+                    Select-Object -ExpandProperty Root
+            )
+        }
+
+        if ($ScopeChoice -eq "3") {
+            try {
+                Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+                $Dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+                $Dialog.Description = "Choose the folder to search for projects/code"
+                if ($Dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                    return @($Dialog.SelectedPath)
+                }
+            }
+            catch {}
+        }
+
+        return @()
+    }
+
+    function Get-CodeLanguage {
+        param([string]$Path)
+
+        $Name = [IO.Path]::GetFileName($Path).ToLowerInvariant()
+        $Ext = [IO.Path]::GetExtension($Path).ToLowerInvariant()
+
+        if ($Name -eq "cmakelists.txt" -or $Ext -eq ".cmake") { return "CMake" }
+        if ($Name -eq "makefile") { return "Make" }
+        if ($Name -eq "dockerfile") { return "Docker" }
+
+        $Map = @{
+            ".c"="C"; ".h"="C/C++ Header"; ".cpp"="C++"; ".cc"="C++"; ".cxx"="C++"; ".hpp"="C++ Header";
+            ".py"="Python"; ".ipynb"="Jupyter"; ".js"="JavaScript"; ".jsx"="JavaScript/React"; ".ts"="TypeScript"; ".tsx"="TypeScript/React";
+            ".java"="Java"; ".kt"="Kotlin"; ".kts"="Kotlin"; ".cs"="C#"; ".fs"="F#"; ".vb"="Visual Basic";
+            ".go"="Go"; ".rs"="Rust"; ".php"="PHP"; ".rb"="Ruby"; ".swift"="Swift"; ".scala"="Scala";
+            ".sh"="Shell"; ".bash"="Shell"; ".zsh"="Shell"; ".ps1"="PowerShell"; ".bat"="Batch"; ".cmd"="Batch";
+            ".sql"="SQL"; ".html"="HTML"; ".htm"="HTML"; ".css"="CSS"; ".scss"="SCSS"; ".sass"="Sass";
+            ".xml"="XML"; ".json"="JSON"; ".yaml"="YAML"; ".yml"="YAML"; ".toml"="TOML";
+            ".md"="Markdown"; ".rst"="reStructuredText"; ".lua"="Lua"; ".r"="R"; ".m"="MATLAB/Objective-C"
+        }
+
+        if ($Map.ContainsKey($Ext)) { return $Map[$Ext] }
+        return "Other"
+    }
+
+    function Test-CodeLikeFile {
+        param([System.IO.FileInfo]$File)
+
+        $Names = @("CMakeLists.txt","Makefile","Dockerfile","package.json","requirements.txt","pyproject.toml","Cargo.toml","pom.xml","build.gradle","build.gradle.kts","docker-compose.yml","docker-compose.yaml","README.md")
+        if ($File.Name -in $Names) { return $true }
+
+        $CodeExtensions = @(
+            ".c",".h",".cpp",".cc",".cxx",".hpp",".py",".ipynb",".js",".jsx",".ts",".tsx",".java",".kt",".kts",
+            ".cs",".fs",".vb",".go",".rs",".php",".rb",".swift",".scala",".sh",".bash",".zsh",".ps1",".bat",".cmd",
+            ".sql",".html",".htm",".css",".scss",".sass",".xml",".json",".yaml",".yml",".toml",".md",".rst",".lua",".r",".m",".cmake"
+        )
+
+        return ($File.Extension.ToLowerInvariant() -in $CodeExtensions)
+    }
+
+    function Find-ProjectRoot {
+        param([string]$StartDirectory)
+
+        $Markers = @(
+            ".git","CMakeLists.txt","package.json","requirements.txt","pyproject.toml","Cargo.toml","pom.xml",
+            "build.gradle","build.gradle.kts","Makefile","Dockerfile","docker-compose.yml","docker-compose.yaml",
+            "README.md"
+        )
+
+        try { $Current = Get-Item -LiteralPath $StartDirectory -ErrorAction Stop } catch { return $StartDirectory }
+        $Fallback = $Current.FullName
+
+        for ($Depth = 0; $Depth -lt 8 -and $null -ne $Current; $Depth++) {
+            foreach ($Marker in $Markers) {
+                if (Test-Path -LiteralPath (Join-Path $Current.FullName $Marker)) {
+                    return $Current.FullName
+                }
+            }
+            $Current = $Current.Parent
+        }
+
+        return $Fallback
+    }
+
+    Write-Section "PROJECT / CODE SEARCH"
+    Write-Host "Search old programming projects by name, structure, filenames, libraries, purpose, language, or old folder origin."
+    Write-Host ""
+    Write-Host "Search scope:"
+    Write-Host "1 - My Windows user folder"
+    Write-Host "2 - All accessible drives"
+    Write-Host "3 - Choose a folder"
+    Write-Host "4 - Return"
+    Write-Host ""
+
+    $ScopeChoice = Read-Host "Choose 1, 2, 3, or 4"
+    if ($ScopeChoice -eq "4") { return }
+    if ($ScopeChoice -notin @("1","2","3")) { return }
+
+    $Roots = Get-SearchRoots $ScopeChoice
+    if ($Roots.Count -eq 0) {
+        Write-Warning "No search location was selected."
+        Read-Host "Press Enter to return"
+        return
+    }
+
+    Write-Host ""
+    $NameClue = Read-Host "Project/folder/file name clue (optional)"
+    $ContentClue = Read-Host "Code/library/class/function/purpose keywords, comma separated (optional)"
+    $LanguageClue = Read-Host "Language/code type such as C++, Python, Java, PowerShell (optional)"
+    $OldOrigin = Read-Host "Old folder/path clue if you remember where it came from (optional)"
+
+    if ([string]::IsNullOrWhiteSpace($NameClue) -and
+        [string]::IsNullOrWhiteSpace($ContentClue) -and
+        [string]::IsNullOrWhiteSpace($LanguageClue) -and
+        [string]::IsNullOrWhiteSpace($OldOrigin)) {
+        Write-Warning "Enter at least one clue."
+        Read-Host "Press Enter to return"
+        return
+    }
+
+    $Terms = @()
+    if (-not [string]::IsNullOrWhiteSpace($ContentClue)) {
+        $Terms = @($ContentClue.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    }
+
+    $ProjectScores = @{}
+    $ProjectDetails = @{}
+    $ScannedFiles = 0
+    $MatchedFiles = 0
+
+    foreach ($Root in $Roots) {
+        Write-Host ""
+        Write-Host "Searching: $Root"
+
+        $Files = Get-ChildItem -LiteralPath $Root -File -Force -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { Test-CodeLikeFile $_ }
+
+        foreach ($File in $Files) {
+            $ScannedFiles++
+            $Score = 0
+            $Reasons = New-Object System.Collections.Generic.List[string]
+            $Language = Get-CodeLanguage $File.FullName
+
+            if (-not [string]::IsNullOrWhiteSpace($NameClue)) {
+                if ($File.Name -like "*$NameClue*") { $Score += 40; $Reasons.Add("filename") }
+                if ($File.DirectoryName -like "*$NameClue*") { $Score += 25; $Reasons.Add("folder name") }
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($LanguageClue)) {
+                if ($Language -like "*$LanguageClue*") { $Score += 25; $Reasons.Add("language/type") }
+                elseif ($File.Extension -like "*$LanguageClue*") { $Score += 15; $Reasons.Add("extension") }
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($OldOrigin)) {
+                $OldLeaf = Split-Path $OldOrigin -Leaf
+                $OldParent = Split-Path $OldOrigin -Parent
+                if ($OldLeaf -and $File.FullName -like "*$OldLeaf*") { $Score += 15; $Reasons.Add("old path leaf") }
+                if ($OldParent) {
+                    $OldParentLeaf = Split-Path $OldParent -Leaf
+                    if ($OldParentLeaf -and $File.DirectoryName -like "*$OldParentLeaf*") { $Score += 10; $Reasons.Add("old folder clue") }
+                }
+            }
+
+            if ($Terms.Count -gt 0 -and $File.Length -le 5MB) {
+                try {
+                    $Text = Get-Content -LiteralPath $File.FullName -Raw -ErrorAction Stop
+                    foreach ($Term in $Terms) {
+                        if ($Text -match [regex]::Escape($Term)) {
+                            $Score += 20
+                            $Reasons.Add("content:$Term")
+                        }
+                    }
+                }
+                catch {}
+            }
+
+            if ($Score -gt 0) {
+                $MatchedFiles++
+                $RootPath = Find-ProjectRoot $File.DirectoryName
+
+                if (-not $ProjectScores.ContainsKey($RootPath)) {
+                    $ProjectScores[$RootPath] = 0
+                    $ProjectDetails[$RootPath] = New-Object System.Collections.Generic.List[object]
+                }
+
+                $ProjectScores[$RootPath] += $Score
+                $ProjectDetails[$RootPath].Add([PSCustomObject]@{
+                    File = $File.FullName
+                    Language = $Language
+                    Score = $Score
+                    Reasons = (($Reasons | Select-Object -Unique) -join "; ")
+                })
+            }
+        }
+    }
+
+    $Results = @()
+    foreach ($ProjectRoot in $ProjectScores.Keys) {
+        $TopFiles = @($ProjectDetails[$ProjectRoot] | Sort-Object Score -Descending | Select-Object -First 5)
+        $Languages = @($ProjectDetails[$ProjectRoot] | Select-Object -ExpandProperty Language -Unique) -join ", "
+        $ReasonText = @($TopFiles | Select-Object -ExpandProperty Reasons) -join " | "
+        $ExampleFiles = @($TopFiles | ForEach-Object { [IO.Path]::GetFileName($_.File) }) -join ", "
+
+        $Results += [PSCustomObject]@{
+            Score = $ProjectScores[$ProjectRoot]
+            ProjectRoot = $ProjectRoot
+            Languages = $Languages
+            ExampleFiles = $ExampleFiles
+            MatchReasons = $ReasonText
+            MatchedFileCount = $ProjectDetails[$ProjectRoot].Count
+        }
+    }
+
+    $Results = @($Results | Sort-Object Score -Descending)
+    $ReportPath = Join-Path $Reports "Project-Code-Search-$Stamp.csv"
+    $Results | Export-Csv -Path $ReportPath -NoTypeInformation
+
+    Write-Host ""
+    Write-Host "Code files scanned: $ScannedFiles"
+    Write-Host "Matching files:     $MatchedFiles"
+    Write-Host "Likely projects:    $($Results.Count)"
+    Write-Host ""
+
+    $Display = @($Results | Select-Object -First 50)
+    for ($i = 0; $i -lt $Display.Count; $i++) {
+        Write-Host "[$($i + 1)] Score $($Display[$i].Score)"
+        Write-Host "    $($Display[$i].ProjectRoot)"
+        Write-Host "    Languages: $($Display[$i].Languages)"
+        Write-Host "    Files: $($Display[$i].ExampleFiles)"
+        Write-Host ""
+    }
+
+    Write-Host "Full CSV report:"
+    Write-Host $ReportPath
+    Write-Host ""
+
+    if ($Display.Count -gt 0) {
+        $Pick = Read-Host "Enter a result number to open that project folder, or press Enter"
+        $Number = 0
+        if ([int]::TryParse($Pick, [ref]$Number)) {
+            if ($Number -ge 1 -and $Number -le $Display.Count) {
+                Start-Process explorer.exe "`"$($Display[$Number - 1].ProjectRoot)`""
+            }
+        }
+    }
+
+    Read-Host "Press Enter to return"
+}
+
+
+# ============================================================
+# WSL / LINUX TERMINAL MAINTENANCE
+# ============================================================
+
+function Show-LinuxMaintenanceMenu {
+
+    function Get-WSLDistros {
+        try {
+            $Raw = & wsl.exe -l -q 2>$null
+            return @($Raw | ForEach-Object { $_.Trim([char]0).Trim() } | Where-Object { $_ })
+        }
+        catch { return @() }
+    }
+
+    function Get-LinuxUpdateCommand {
+        param([string]$Distro)
+
+        $Detect = & wsl.exe -d $Distro -- sh -lc 'if command -v apt >/dev/null 2>&1; then echo apt; elif command -v dnf >/dev/null 2>&1; then echo dnf; elif command -v yum >/dev/null 2>&1; then echo yum; elif command -v pacman >/dev/null 2>&1; then echo pacman; elif command -v zypper >/dev/null 2>&1; then echo zypper; else echo unknown; fi' 2>$null
+        $Manager = (($Detect | Select-Object -Last 1) -as [string]).Trim()
+
+        switch ($Manager) {
+            "apt"    { return "sudo apt update && sudo apt upgrade" }
+            "dnf"    { return "sudo dnf upgrade --refresh" }
+            "yum"    { return "sudo yum update" }
+            "pacman" { return "sudo pacman -Syu" }
+            "zypper" { return "sudo zypper refresh && sudo zypper update" }
+            default   { return $null }
+        }
+    }
+
+    while ($true) {
+        Write-Section "WSL / LINUX TERMINAL MAINTENANCE"
+        Write-Host "1 - Show WSL status and installed Linux distributions"
+        Write-Host "2 - Check package updates in a Linux distribution"
+        Write-Host "3 - Update packages in a Linux distribution"
+        Write-Host "4 - Update the Windows WSL engine/kernel"
+        Write-Host "5 - Open a Linux distribution terminal"
+        Write-Host "6 - Return"
+        Write-Host ""
+
+        $Choice = Read-Host "Choose 1, 2, 3, 4, 5, or 6"
+        if ($Choice -eq "6") { return }
+
+        $Distros = Get-WSLDistros
+
+        if ($Choice -eq "1") {
+            Write-Host ""
+            & wsl.exe --status
+            Write-Host ""
+            & wsl.exe --version
+            Write-Host ""
+            Write-Host "Installed distributions:"
+            if ($Distros.Count -eq 0) { Write-Host "  None detected." }
+            for ($i=0; $i -lt $Distros.Count; $i++) { Write-Host "  $($i+1) - $($Distros[$i])" }
+            Read-Host "Press Enter to continue"
+            continue
+        }
+
+        if ($Choice -eq "4") {
+            if (Confirm-Action "Run wsl.exe --update now?") {
+                & wsl.exe --update
+            }
+            Read-Host "Press Enter to continue"
+            continue
+        }
+
+        if ($Distros.Count -eq 0) {
+            Write-Warning "No WSL Linux distributions were detected."
+            Read-Host "Press Enter to continue"
+            continue
+        }
+
+        Write-Host ""
+        for ($i=0; $i -lt $Distros.Count; $i++) { Write-Host "$($i+1) - $($Distros[$i])" }
+        $Pick = Read-Host "Choose a distribution number"
+        $Index = 0
+        if (-not [int]::TryParse($Pick, [ref]$Index) -or $Index -lt 1 -or $Index -gt $Distros.Count) {
+            Write-Warning "Invalid distribution selection."
+            Read-Host "Press Enter to continue"
+            continue
+        }
+
+        $Distro = $Distros[$Index - 1]
+
+        if ($Choice -eq "5") {
+            Start-Process wsl.exe -ArgumentList @("-d", $Distro)
+            continue
+        }
+
+        $Manager = (& wsl.exe -d $Distro -- sh -lc 'if command -v apt >/dev/null 2>&1; then echo apt; elif command -v dnf >/dev/null 2>&1; then echo dnf; elif command -v yum >/dev/null 2>&1; then echo yum; elif command -v pacman >/dev/null 2>&1; then echo pacman; elif command -v zypper >/dev/null 2>&1; then echo zypper; else echo unknown; fi' 2>$null | Select-Object -Last 1)
+        $Manager = ([string]$Manager).Trim()
+
+        if ($Choice -eq "2") {
+            Write-Host ""
+            Write-Host "Checking updates in $Distro using $Manager..."
+            switch ($Manager) {
+                "apt"    { & wsl.exe -d $Distro -- sh -lc 'apt list --upgradable 2>/dev/null' }
+                "dnf"    { & wsl.exe -d $Distro -- sh -lc 'dnf check-update || true' }
+                "yum"    { & wsl.exe -d $Distro -- sh -lc 'yum check-update || true' }
+                "pacman" { & wsl.exe -d $Distro -- sh -lc 'pacman -Qu || true' }
+                "zypper" { & wsl.exe -d $Distro -- sh -lc 'zypper list-updates || true' }
+                default   { Write-Warning "Supported package manager not detected." }
+            }
+            Read-Host "Press Enter to continue"
+            continue
+        }
+
+        if ($Choice -eq "3") {
+            $Command = Get-LinuxUpdateCommand $Distro
+            if ($null -eq $Command) {
+                Write-Warning "Supported package manager not detected."
+                Read-Host "Press Enter to continue"
+                continue
+            }
+
+            Write-Host ""
+            Write-Host "Linux command: $Command"
+            Write-Host "Your Linux sudo password may be requested."
+            if (Confirm-Action "Update $Distro now?") {
+                & wsl.exe -d $Distro -- sh -lc $Command
+            }
+            Read-Host "Press Enter to continue"
+        }
+    }
+}
+
+
+# ============================================================
+# SPEECH LISTENER / AUDIO INPUT
+# ============================================================
+
+function Show-SpeechListenerMenu {
+
+    function Show-AudioEndpoints {
+        Write-Host ""
+        Write-Host "Detected audio endpoints/peripherals:"
+        Write-Host ""
+        try {
+            $Endpoints = Get-PnpDevice -Class AudioEndpoint -ErrorAction Stop |
+                Select-Object Status, FriendlyName, InstanceId
+            if ($null -eq $Endpoints) {
+                Write-Host "No AudioEndpoint devices were returned."
+            }
+            else {
+                $Endpoints | Format-Table Status, FriendlyName -AutoSize
+            }
+        }
+        catch {
+            Write-Warning "Audio endpoint enumeration is unavailable on this Windows installation."
+            try {
+                Get-CimInstance Win32_SoundDevice -ErrorAction Stop |
+                    Select-Object Status, Name, Manufacturer |
+                    Format-Table -AutoSize
+            }
+            catch {}
+        }
+    }
+
+    function Invoke-SpeechListeningSession {
+        param([int]$Seconds = 30)
+
+        try {
+            Add-Type -AssemblyName System.Speech -ErrorAction Stop
+        }
+        catch {
+            Write-Warning "System.Speech is not available on this Windows installation."
+            return
+        }
+
+        $Recognizer = $null
+        try {
+            $Recognizer = New-Object System.Speech.Recognition.SpeechRecognitionEngine
+            $Grammar = New-Object System.Speech.Recognition.DictationGrammar
+            $Recognizer.LoadGrammar($Grammar)
+            $Recognizer.SetInputToDefaultAudioDevice()
+        }
+        catch {
+            Write-Warning "Speech recognition could not initialize."
+            Write-Host "Make sure a microphone is connected, enabled, and selected as the default Windows input device."
+            if ($null -ne $Recognizer) { try { $Recognizer.Dispose() } catch {} }
+            return
+        }
+
+        $Transcript = New-Object System.Collections.Generic.List[object]
+        $Deadline = (Get-Date).AddSeconds($Seconds)
+
+        Write-Host ""
+        Write-Host "Listening through the CURRENT DEFAULT Windows microphone for $Seconds seconds."
+        Write-Host "This only listens while this session is active. It does not run secretly in the background."
+        Write-Host "Speak normally..."
+        Write-Host ""
+
+        while ((Get-Date) -lt $Deadline) {
+            try {
+                $Remaining = $Deadline - (Get-Date)
+                if ($Remaining.TotalSeconds -le 0) { break }
+                $Window = [TimeSpan]::FromSeconds([math]::Min(5, $Remaining.TotalSeconds))
+                $Result = $Recognizer.Recognize($Window)
+
+                if ($null -ne $Result -and -not [string]::IsNullOrWhiteSpace($Result.Text)) {
+                    $Line = [PSCustomObject]@{
+                        Time = Get-Date
+                        Confidence = [math]::Round($Result.Confidence, 3)
+                        Text = $Result.Text
+                    }
+                    $Transcript.Add($Line)
+                    Write-Host "[$($Line.Confidence)] $($Line.Text)"
+                }
+            }
+            catch {}
+        }
+
+        try { $Recognizer.Dispose() } catch {}
+
+        $TranscriptPath = Join-Path $Reports "Speech-Transcript-$(Get-Date -Format 'yyyy-MM-dd_HH-mm-ss').csv"
+        $Transcript | Export-Csv -Path $TranscriptPath -NoTypeInformation
+
+        Write-Host ""
+        Write-Host "Listening stopped."
+        Write-Host "Recognized phrases: $($Transcript.Count)"
+        Write-Host "Transcript: $TranscriptPath"
+    }
+
+    while ($true) {
+        Write-Section "SPEECH LISTENER / MICROPHONE"
+        Write-Host "1 - List built-in and attached audio endpoints"
+        Write-Host "2 - Listen for 15 seconds"
+        Write-Host "3 - Listen for 30 seconds"
+        Write-Host "4 - Listen for 60 seconds"
+        Write-Host "5 - Open Windows Sound settings to choose microphone"
+        Write-Host "6 - Return"
+        Write-Host ""
+        Write-Host "Speech input uses the current DEFAULT Windows recording device."
+        Write-Host "An attached USB/Bluetooth headset or microphone works after Windows makes it the default input."
+        Write-Host ""
+
+        $Choice = Read-Host "Choose 1, 2, 3, 4, 5, or 6"
+        switch ($Choice) {
+            "1" { Show-AudioEndpoints; Read-Host "Press Enter to continue" }
+            "2" { Invoke-SpeechListeningSession 15; Read-Host "Press Enter to continue" }
+            "3" { Invoke-SpeechListeningSession 30; Read-Host "Press Enter to continue" }
+            "4" { Invoke-SpeechListeningSession 60; Read-Host "Press Enter to continue" }
+            "5" { Start-Process "ms-settings:sound" }
+            "6" { return }
+        }
+    }
+}
+
+
+
+# ============================================================
+# DRIVE PHOTO SEARCH / DESKTOP BACKUP
+# ============================================================
+
+function Get-PhotoExtensions {
+    return @(
+        ".jpg", ".jpeg", ".jpe", ".jfif",
+        ".png", ".gif", ".bmp",
+        ".tif", ".tiff",
+        ".webp", ".heic", ".heif", ".avif",
+        ".dng", ".cr2", ".cr3", ".nef", ".nrw",
+        ".arw", ".sr2", ".srf",
+        ".raf", ".orf", ".rw2", ".pef", ".srw",
+        ".x3f", ".3fr", ".fff", ".rwl", ".iiq",
+        ".kdc", ".erf", ".mos", ".mrw"
+    )
+}
+
+function Get-ReadyPhotoDrives {
+    $Ready = @()
+
+    try {
+        $Drives = [System.IO.DriveInfo]::GetDrives()
+
+        foreach ($Drive in $Drives) {
+            try {
+                if (-not $Drive.IsReady) {
+                    continue
+                }
+
+                if (
+                    $Drive.DriveType -eq [System.IO.DriveType]::Fixed -or
+                    $Drive.DriveType -eq [System.IO.DriveType]::Removable -or
+                    $Drive.DriveType -eq [System.IO.DriveType]::Network
+                ) {
+                    $Ready += $Drive
+                }
+            }
+            catch {
+            }
+        }
+    }
+    catch {
+    }
+
+    return $Ready
+}
+
+function Get-PhotoFilesFromRoot {
+
+    param(
+        [string]$Root,
+        [System.Collections.Generic.List[object]]$Results,
+        [string]$DestinationRoot
+    )
+
+    if (-not (Test-Path -LiteralPath $Root)) {
+        return
+    }
+
+    $Extensions = @(Get-PhotoExtensions)
+
+    Write-Host ""
+    Write-Host "Searching:"
+    Write-Host "  $Root"
+    Write-Host ""
+
+    try {
+
+        Get-ChildItem `
+            -LiteralPath $Root `
+            -File `
+            -Force `
+            -Recurse `
+            -ErrorAction SilentlyContinue |
+        ForEach-Object {
+
+            $Item = $_
+
+            try {
+                if (
+                    $DestinationRoot -and
+                    $Item.FullName.StartsWith(
+                        $DestinationRoot,
+                        [System.StringComparison]::OrdinalIgnoreCase
+                    )
+                ) {
+                    return
+                }
+
+                $Extension = $Item.Extension.ToLowerInvariant()
+
+                if ($Extensions -contains $Extension) {
+
+                    $Results.Add(
+                        [PSCustomObject]@{
+                            FullName      = $Item.FullName
+                            Name          = $Item.Name
+                            Extension     = $Extension
+                            Length        = $Item.Length
+                            LastWriteTime = $Item.LastWriteTime
+                            Root          = $Root
+                        }
+                    )
+                }
+            }
+            catch {
+            }
+        }
+
+    }
+    catch {
+        Write-Warning "Some folders under this location could not be searched."
+    }
+}
+
+function Get-SafeBackupRelativePath {
+
+    param(
+        [string]$SourcePath
+    )
+
+    $Full = [System.IO.Path]::GetFullPath($SourcePath)
+    $Root = [System.IO.Path]::GetPathRoot($Full)
+
+    if ([string]::IsNullOrWhiteSpace($Root)) {
+        return [System.IO.Path]::GetFileName($Full)
+    }
+
+    $RootLabel = $Root.TrimEnd("\").Replace(":", "").Replace("\", "_").Replace("/", "_")
+
+    if ([string]::IsNullOrWhiteSpace($RootLabel)) {
+        $RootLabel = "Drive"
+    }
+
+    $Relative = $Full.Substring($Root.Length).TrimStart("\", "/")
+
+    return (Join-Path ("Drive_" + $RootLabel) $Relative)
+}
+
+function Copy-PhotoBackupToDesktop {
+
+    param(
+        [object[]]$Photos
+    )
+
+    if ($null -eq $Photos -or $Photos.Count -eq 0) {
+        Write-Host ""
+        Write-Host "No photos were found to back up."
+        return
+    }
+
+    $DesktopPath = [Environment]::GetFolderPath("Desktop")
+    $PhotoBackupRoot = Join-Path $DesktopPath ("Photo-Backup-" + (Get-Date -Format "yyyy-MM-dd_HH-mm-ss"))
+
+    New-Item `
+        -ItemType Directory `
+        -Path $PhotoBackupRoot `
+        -Force `
+        -ErrorAction Stop | Out-Null
+
+    $Manifest = New-Object System.Collections.Generic.List[object]
+    $Copied = 0
+    $Failed = 0
+    $CopiedBytes = [long]0
+
+    Write-Host ""
+    Write-Host "Backing up photos to:"
+    Write-Host "  $PhotoBackupRoot"
+    Write-Host ""
+
+    foreach ($Photo in $Photos) {
+
+        $Source = $Photo.FullName
+        $Status = "Copied"
+        $Destination = ""
+
+        try {
+
+            $Relative = Get-SafeBackupRelativePath -SourcePath $Source
+            $Destination = Join-Path $PhotoBackupRoot $Relative
+            $DestinationDirectory = Split-Path -Parent $Destination
+
+            New-Item `
+                -ItemType Directory `
+                -Path $DestinationDirectory `
+                -Force `
+                -ErrorAction SilentlyContinue | Out-Null
+
+            if (Test-Path -LiteralPath $Destination) {
+
+                $Base = [System.IO.Path]::GetFileNameWithoutExtension($Destination)
+                $Ext = [System.IO.Path]::GetExtension($Destination)
+                $Dir = Split-Path -Parent $Destination
+                $Counter = 2
+
+                do {
+                    $Destination = Join-Path $Dir ("{0} ({1}){2}" -f $Base, $Counter, $Ext)
+                    $Counter++
+                }
+                until (-not (Test-Path -LiteralPath $Destination))
+            }
+
+            Copy-Item `
+                -LiteralPath $Source `
+                -Destination $Destination `
+                -Force `
+                -ErrorAction Stop
+
+            $Copied++
+            $CopiedBytes += [long]$Photo.Length
+        }
+        catch {
+            $Status = "Failed: " + $_.Exception.Message
+            $Failed++
+        }
+
+        $Manifest.Add(
+            [PSCustomObject]@{
+                Source        = $Source
+                Destination   = $Destination
+                SizeBytes     = $Photo.Length
+                LastWriteTime = $Photo.LastWriteTime
+                Status        = $Status
+            }
+        )
+    }
+
+    $ManifestPath = Join-Path $PhotoBackupRoot "Photo-Backup-Manifest.csv"
+
+    $Manifest |
+        Export-Csv `
+            -Path $ManifestPath `
+            -NoTypeInformation `
+            -Encoding UTF8
+
+    Write-Host ""
+    Write-Host "Photo backup complete."
+    Write-Host "Copied: $Copied"
+    Write-Host "Failed: $Failed"
+    Write-Host "Copied size: $(Format-Bytes $CopiedBytes)"
+    Write-Host "Manifest:"
+    Write-Host "  $ManifestPath"
+    Write-Host ""
+
+    if (Confirm-Action "Open the photo backup folder?") {
+        Start-Process explorer.exe "`"$PhotoBackupRoot`""
+    }
+}
+
+function Show-DrivePhotoSearchMenu {
+
+    while ($true) {
+
+        Write-Section "DRIVE PHOTO SEARCH / DESKTOP BACKUP"
+
+        Write-Host "Supported photo types include:"
+        Write-Host "JPG, JPEG, PNG, HEIC, HEIF, WEBP, AVIF, TIFF, BMP, GIF,"
+        Write-Host "and many camera RAW formats such as DNG, CR2/CR3, NEF, ARW, RAF, ORF, RW2."
+        Write-Host ""
+        Write-Host "Backups are COPIED to the current Windows user's Desktop."
+        Write-Host "Original photos are never moved or deleted."
+        Write-Host ""
+        Write-Host "1 - Deep search ALL accessible drives"
+        Write-Host "2 - Search ONE drive"
+        Write-Host "3 - Search ONE folder"
+        Write-Host "4 - Quick search common photo folders"
+        Write-Host "5 - Return"
+        Write-Host ""
+
+        $PhotoChoice = Read-Host "Choose 1, 2, 3, 4, or 5"
+
+        if ($PhotoChoice -eq "5") {
+            return
+        }
+
+        $Photos = New-Object System.Collections.Generic.List[object]
+        $Roots = @()
+
+        if ($PhotoChoice -eq "1") {
+
+            $ReadyDrives = @(Get-ReadyPhotoDrives)
+
+            if ($ReadyDrives.Count -eq 0) {
+                Write-Warning "No accessible drives were found."
+                Read-Host "Press Enter to continue"
+                continue
+            }
+
+            Write-Host ""
+            Write-Host "This performs a deep recursive search and can take a while on large drives."
+            Write-Host ""
+
+            foreach ($Drive in $ReadyDrives) {
+                $Roots += $Drive.RootDirectory.FullName
+            }
+        }
+        elseif ($PhotoChoice -eq "2") {
+
+            $ReadyDrives = @(Get-ReadyPhotoDrives)
+
+            if ($ReadyDrives.Count -eq 0) {
+                Write-Warning "No accessible drives were found."
+                Read-Host "Press Enter to continue"
+                continue
+            }
+
+            Write-Host ""
+            for ($i = 0; $i -lt $ReadyDrives.Count; $i++) {
+                $Drive = $ReadyDrives[$i]
+
+                $Label = ""
+                try {
+                    $Label = $Drive.VolumeLabel
+                }
+                catch {
+                }
+
+                Write-Host ("[{0}] {1}  {2}  {3}" -f ($i + 1), $Drive.Name, $Drive.DriveType, $Label)
+            }
+
+            Write-Host ""
+            $DriveNumberText = Read-Host "Enter drive number"
+
+            $DriveNumber = 0
+            if (-not [int]::TryParse($DriveNumberText, [ref]$DriveNumber)) {
+                Write-Warning "Invalid drive number."
+                Read-Host "Press Enter to continue"
+                continue
+            }
+
+            if ($DriveNumber -lt 1 -or $DriveNumber -gt $ReadyDrives.Count) {
+                Write-Warning "Invalid drive number."
+                Read-Host "Press Enter to continue"
+                continue
+            }
+
+            $Roots += $ReadyDrives[$DriveNumber - 1].RootDirectory.FullName
+        }
+        elseif ($PhotoChoice -eq "3") {
+
+            try {
+                Add-Type -AssemblyName System.Windows.Forms
+
+                $Dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+                $Dialog.Description = "Choose a folder to search for photos"
+                $Dialog.ShowNewFolderButton = $false
+
+                if ($Dialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) {
+                    continue
+                }
+
+                $Roots += $Dialog.SelectedPath
+            }
+            catch {
+                Write-Warning "The Windows folder picker could not be opened."
+                Read-Host "Press Enter to continue"
+                continue
+            }
+        }
+        elseif ($PhotoChoice -eq "4") {
+
+            $CandidateRoots = @()
+
+            $UserPictures = [Environment]::GetFolderPath("MyPictures")
+            $DesktopPath = [Environment]::GetFolderPath("Desktop")
+            $Downloads = Join-Path $env:USERPROFILE "Downloads"
+            $OneDrivePictures = Join-Path $env:USERPROFILE "OneDrive\Pictures"
+            $OneDrivePhotos = Join-Path $env:USERPROFILE "OneDrive\Photos"
+
+            $CandidateRoots += $UserPictures
+            $CandidateRoots += $DesktopPath
+            $CandidateRoots += $Downloads
+            $CandidateRoots += $OneDrivePictures
+            $CandidateRoots += $OneDrivePhotos
+
+            foreach ($Drive in @(Get-ReadyPhotoDrives)) {
+                $CandidateRoots += (Join-Path $Drive.RootDirectory.FullName "DCIM")
+                $CandidateRoots += (Join-Path $Drive.RootDirectory.FullName "Pictures")
+                $CandidateRoots += (Join-Path $Drive.RootDirectory.FullName "Photos")
+                $CandidateRoots += (Join-Path $Drive.RootDirectory.FullName "Camera")
+            }
+
+            $Roots = @(
+                $CandidateRoots |
+                    Where-Object {
+                        $_ -and (Test-Path -LiteralPath $_)
+                    } |
+                    Select-Object -Unique
+            )
+        }
+        else {
+            continue
+        }
+
+        $DesktopPath = [Environment]::GetFolderPath("Desktop")
+
+        foreach ($Root in ($Roots | Select-Object -Unique)) {
+            Get-PhotoFilesFromRoot `
+                -Root $Root `
+                -Results $Photos `
+                -DestinationRoot $DesktopPath
+        }
+
+        $FoundPhotos = @(
+            $Photos |
+                Sort-Object FullName -Unique
+        )
+
+        $TotalBytes = [long]0
+
+        foreach ($Photo in $FoundPhotos) {
+            $TotalBytes += [long]$Photo.Length
+        }
+
+        Write-Host ""
+        Write-Host "============================================================"
+        Write-Host "PHOTO SEARCH RESULTS"
+        Write-Host "============================================================"
+        Write-Host ""
+        Write-Host "Photos found: $($FoundPhotos.Count)"
+        Write-Host "Total size:   $(Format-Bytes $TotalBytes)"
+        Write-Host ""
+
+        $PhotoSearchReport = Join-Path `
+            $Reports `
+            ("Photo-Search-" + (Get-Date -Format "yyyy-MM-dd_HH-mm-ss") + ".csv")
+
+        $FoundPhotos |
+            Select-Object `
+                FullName,
+                Name,
+                Extension,
+                Length,
+                LastWriteTime |
+            Export-Csv `
+                -Path $PhotoSearchReport `
+                -NoTypeInformation `
+                -Encoding UTF8
+
+        Write-Host "Search report:"
+        Write-Host "  $PhotoSearchReport"
+        Write-Host ""
+
+        if ($FoundPhotos.Count -gt 0) {
+
+            $FoundPhotos |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object `
+                    -First 25 `
+                    Name,
+                    Extension,
+                    @{
+                        Name = "SizeMB"
+                        Expression = {
+                            [math]::Round($_.Length / 1MB, 2)
+                        }
+                    },
+                    LastWriteTime,
+                    FullName |
+                Format-Table -AutoSize
+
+            Write-Host ""
+            Write-Host "Only the newest 25 results are shown here."
+            Write-Host "The CSV report contains the full result list."
+            Write-Host ""
+
+            if (Confirm-Action "Copy ALL found photos to a dated backup folder on the Desktop?") {
+                Copy-PhotoBackupToDesktop -Photos $FoundPhotos
+            }
+        }
+
+        Read-Host "Press Enter to return"
+    }
+}
+
+
+# ============================================================
+# EXTERNAL DRIVE HEALTH / DIAGNOSIS
+# ============================================================
+
+function Get-ExternalDiskCandidates {
+
+    $Items = @()
+
+    try {
+        $Disks = @(Get-Disk -ErrorAction SilentlyContinue)
+
+        foreach ($Disk in $Disks) {
+
+            $BusType = ""
+            try { $BusType = [string]$Disk.BusType } catch {}
+
+            $IsExternal = $false
+
+            if ($BusType -match 'USB|SD|MMC|1394|Thunderbolt') {
+                $IsExternal = $true
+            }
+
+            if ($IsExternal) {
+                $Items += $Disk
+            }
+        }
+    }
+    catch {
+    }
+
+    return $Items
+}
+
+function Get-PhysicalDiskMatchForDisk {
+
+    param(
+        [object]$Disk
+    )
+
+    try {
+        $Physical = @(Get-PhysicalDisk -ErrorAction SilentlyContinue)
+
+        foreach ($P in $Physical) {
+
+            $Match = $false
+
+            try {
+                if ($P.DeviceId -eq [string]$Disk.Number) {
+                    $Match = $true
+                }
+            }
+            catch {
+            }
+
+            if (-not $Match) {
+                try {
+                    if (
+                        $Disk.FriendlyName -and
+                        $P.FriendlyName -and
+                        $Disk.FriendlyName -eq $P.FriendlyName
+                    ) {
+                        $Match = $true
+                    }
+                }
+                catch {
+                }
+            }
+
+            if ($Match) {
+                return $P
+            }
+        }
+    }
+    catch {
+    }
+
+    return $null
+}
+
+function Show-ExternalDriveDiagnosis {
+
+    Write-Section "EXTERNAL DRIVE HEALTH / DIAGNOSIS"
+
+    Write-Host "This section performs read-only diagnostics by default."
+    Write-Host "It does NOT format, initialize, repair, or erase the drive."
+    Write-Host ""
+    Write-Host "It can help distinguish:"
+    Write-Host "- USB/enclosure/cable detection problems"
+    Write-Host "- Drive present but no readable media"
+    Write-Host "- Offline disks"
+    Write-Host "- RAW or unknown filesystems"
+    Write-Host "- Missing/invalid partitions"
+    Write-Host "- SMART / storage-health warnings when the USB bridge exposes them"
+    Write-Host "- Mac-formatted drives that Windows cannot natively mount"
+    Write-Host ""
+
+    $ExternalDisks = @(Get-ExternalDiskCandidates)
+
+    if ($ExternalDisks.Count -eq 0) {
+
+        Write-Warning "No external disks were detected by Windows Storage Management."
+        Write-Host ""
+        Write-Host "Possible causes include:"
+        Write-Host "- bad USB cable"
+        Write-Host "- insufficient power"
+        Write-Host "- failing enclosure / USB-to-SATA bridge"
+        Write-Host "- drive electronics failure"
+        Write-Host "- device visible to Plug and Play but not exposed as a disk"
+        Write-Host ""
+
+        Write-Host "USB / storage devices currently visible to Windows:"
+        Write-Host ""
+
+        try {
+            Get-PnpDevice `
+                -PresentOnly `
+                -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.Class -in @("DiskDrive","USB","SCSIAdapter","Storage")
+                } |
+                Select-Object Status, Class, FriendlyName, InstanceId |
+                Format-Table -AutoSize
+        }
+        catch {
+            Write-Warning "Could not enumerate Plug and Play devices."
+        }
+
+        return
+    }
+
+    Write-Host "External disks detected:"
+    Write-Host ""
+
+    for ($i = 0; $i -lt $ExternalDisks.Count; $i++) {
+
+        $Disk = $ExternalDisks[$i]
+
+        Write-Host ("[{0}] Disk {1} - {2} - {3} - {4}" -f `
+            ($i + 1),
+            $Disk.Number,
+            $Disk.FriendlyName,
+            $Disk.BusType,
+            (Format-Bytes ([long]$Disk.Size))
+        )
+    }
+
+    Write-Host ""
+    $SelectionText = Read-Host "Choose a disk number from the list"
+
+    $Selection = 0
+
+    if (-not [int]::TryParse($SelectionText, [ref]$Selection)) {
+        Write-Warning "Invalid selection."
+        return
+    }
+
+    if ($Selection -lt 1 -or $Selection -gt $ExternalDisks.Count) {
+        Write-Warning "Invalid selection."
+        return
+    }
+
+    $Disk = $ExternalDisks[$Selection - 1]
+
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "DISK SUMMARY"
+    Write-Host "============================================================"
+    Write-Host ""
+
+    Write-Host "Disk Number:        $($Disk.Number)"
+    Write-Host "Name:               $($Disk.FriendlyName)"
+    Write-Host "Serial Number:      $($Disk.SerialNumber)"
+    Write-Host "Bus Type:           $($Disk.BusType)"
+    Write-Host "Partition Style:    $($Disk.PartitionStyle)"
+    Write-Host "Operational Status: $($Disk.OperationalStatus)"
+    Write-Host "Health Status:      $($Disk.HealthStatus)"
+    Write-Host "Offline:            $($Disk.IsOffline)"
+    Write-Host "Read Only:          $($Disk.IsReadOnly)"
+    Write-Host "Size:               $(Format-Bytes ([long]$Disk.Size))"
+    Write-Host ""
+
+    $Findings = New-Object System.Collections.Generic.List[string]
+
+    if ($Disk.IsOffline) {
+        $Findings.Add("Disk is OFFLINE. Windows sees the disk but is not currently using it.")
+    }
+
+    if ($Disk.Size -le 0) {
+        $Findings.Add("Disk reports zero capacity or no usable media. Cable, enclosure/bridge, power, or hardware failure is possible.")
+    }
+
+    if ([string]$Disk.PartitionStyle -eq "RAW") {
+        $Findings.Add("Partition style is RAW/unknown. The partition table may be missing, damaged, unsupported, or unreadable.")
+    }
+
+    if (
+        $Disk.HealthStatus -and
+        [string]$Disk.HealthStatus -notmatch '^Healthy$'
+    ) {
+        $Findings.Add("Windows reports disk health as $($Disk.HealthStatus).")
+    }
+
+    if (
+        $Disk.OperationalStatus -and
+        ([string]($Disk.OperationalStatus -join ",")) -notmatch 'Online|OK'
+    ) {
+        $Findings.Add("Operational status is $($Disk.OperationalStatus).")
+    }
+
+    Write-Host "Partitions and volumes:"
+    Write-Host ""
+
+    $Partitions = @()
+
+    try {
+        $Partitions = @(Get-Partition -DiskNumber $Disk.Number -ErrorAction SilentlyContinue)
+    }
+    catch {
+    }
+
+    if ($Partitions.Count -eq 0) {
+
+        Write-Warning "No partitions were exposed by Windows."
+
+        if ($Disk.Size -gt 0) {
+            $Findings.Add("Disk has capacity but no readable partitions. It may be unpartitioned, have a damaged partition table, or use a filesystem/partition scheme Windows cannot interpret.")
+        }
+    }
+    else {
+
+        foreach ($Partition in $Partitions) {
+
+            $Volume = $null
+
+            try {
+                $Volume = Get-Volume -Partition $Partition -ErrorAction SilentlyContinue
+            }
+            catch {
+            }
+
+            $DriveLetter = ""
+            $FileSystem = ""
+            $VolumeHealth = ""
+            $VolumeSize = [long]0
+
+            if ($null -ne $Volume) {
+                $DriveLetter = $Volume.DriveLetter
+                $FileSystem = [string]$Volume.FileSystem
+                $VolumeHealth = [string]$Volume.HealthStatus
+                $VolumeSize = [long]$Volume.Size
+            }
+
+            Write-Host ("Partition {0}: Drive={1}:  Type={2}  FS={3}  Health={4}  Size={5}" -f `
+                $Partition.PartitionNumber,
+                $DriveLetter,
+                $Partition.Type,
+                $FileSystem,
+                $VolumeHealth,
+                (Format-Bytes $VolumeSize)
+            )
+
+            if ([string]::IsNullOrWhiteSpace($FileSystem)) {
+                $Findings.Add("Partition $($Partition.PartitionNumber) has no Windows-readable filesystem shown. This can happen with APFS/HFS+, Linux filesystems, damaged filesystems, or unformatted partitions.")
+            }
+            elseif ($FileSystem -eq "RAW") {
+                $Findings.Add("Partition $($Partition.PartitionNumber) appears RAW. Do NOT format it if you need the data.")
+            }
+        }
+    }
+
+    Write-Host ""
+    Write-Host "SMART / reliability information:"
+    Write-Host ""
+
+    $PhysicalDisk = Get-PhysicalDiskMatchForDisk -Disk $Disk
+
+    if ($null -ne $PhysicalDisk) {
+
+        Write-Host "Physical disk health:      $($PhysicalDisk.HealthStatus)"
+        Write-Host "Operational status:        $($PhysicalDisk.OperationalStatus)"
+        Write-Host "Media type:                $($PhysicalDisk.MediaType)"
+        Write-Host "Cannot pool reason:        $($PhysicalDisk.CannotPoolReason)"
+        Write-Host ""
+
+        try {
+
+            $Reliability = Get-StorageReliabilityCounter `
+                -PhysicalDisk $PhysicalDisk `
+                -ErrorAction Stop
+
+            $Reliability |
+                Select-Object `
+                    Temperature,
+                    TemperatureMax,
+                    Wear,
+                    PowerOnHours,
+                    ReadErrorsTotal,
+                    ReadErrorsUncorrected,
+                    WriteErrorsTotal,
+                    WriteErrorsUncorrected |
+                Format-List
+
+            if ($Reliability.ReadErrorsUncorrected -gt 0) {
+                $Findings.Add("Uncorrected read errors were reported.")
+            }
+
+            if ($Reliability.WriteErrorsUncorrected -gt 0) {
+                $Findings.Add("Uncorrected write errors were reported.")
+            }
+
+            if ($Reliability.Temperature -ge 55) {
+                $Findings.Add("Drive temperature is high: $($Reliability.Temperature) C.")
+            }
+        }
+        catch {
+
+            Write-Host "Detailed SMART/reliability counters were not exposed."
+            Write-Host "This is common with some USB enclosures and USB-to-SATA bridges."
+
+            $Findings.Add("SMART data is unavailable through the current USB/enclosure interface. This does not prove the disk is healthy or unhealthy.")
+        }
+    }
+    else {
+
+        Write-Host "No matching PhysicalDisk object was found."
+        Write-Host "The enclosure/bridge may not expose SMART information."
+
+        $Findings.Add("Windows sees the logical disk, but SMART/reliability information is not available through this connection.")
+    }
+
+    Write-Host ""
+    Write-Host "============================================================"
+    Write-Host "DIAGNOSTIC FINDINGS"
+    Write-Host "============================================================"
+    Write-Host ""
+
+    if ($Findings.Count -eq 0) {
+        Write-Host "No obvious Windows storage-health problem was detected."
+        Write-Host "If files still cannot be opened, the issue may be the filesystem, permissions, encryption, or application-level corruption."
+    }
+    else {
+        foreach ($Finding in $Findings) {
+            Write-Host "- $Finding"
+        }
+    }
+
+    Write-Host ""
+    Write-Host "IMPORTANT:"
+    Write-Host "- If Windows asks to FORMAT an unfamiliar drive, choose Cancel if you need its data."
+    Write-Host "- A spinning drive that powers on can still have bad heads, bad sectors, firmware problems, or a failing USB bridge."
+    Write-Host "- If the drive repeatedly disconnects, clicks, grinds, or causes Windows to freeze, stop repeated scans and prioritize data recovery."
+    Write-Host ""
+
+    $DriveHealthReport = Join-Path `
+        $Reports `
+        ("External-Drive-Diagnosis-Disk{0}-{1}.txt" -f $Disk.Number, (Get-Date -Format "yyyy-MM-dd_HH-mm-ss"))
+
+    $ReportLines = New-Object System.Collections.Generic.List[string]
+    $ReportLines.Add("PC Maintenance U - External Drive Diagnosis")
+    $ReportLines.Add("Date: $(Get-Date)")
+    $ReportLines.Add("")
+    $ReportLines.Add("Disk Number: $($Disk.Number)")
+    $ReportLines.Add("Name: $($Disk.FriendlyName)")
+    $ReportLines.Add("Serial Number: $($Disk.SerialNumber)")
+    $ReportLines.Add("Bus Type: $($Disk.BusType)")
+    $ReportLines.Add("Partition Style: $($Disk.PartitionStyle)")
+    $ReportLines.Add("Operational Status: $($Disk.OperationalStatus)")
+    $ReportLines.Add("Health Status: $($Disk.HealthStatus)")
+    $ReportLines.Add("Offline: $($Disk.IsOffline)")
+    $ReportLines.Add("Read Only: $($Disk.IsReadOnly)")
+    $ReportLines.Add("Size: $(Format-Bytes ([long]$Disk.Size))")
+    $ReportLines.Add("")
+    $ReportLines.Add("Findings:")
+
+    if ($Findings.Count -eq 0) {
+        $ReportLines.Add("- No obvious Windows storage-health problem detected.")
+    }
+    else {
+        foreach ($Finding in $Findings) {
+            $ReportLines.Add("- $Finding")
+        }
+    }
+
+    $ReportLines |
+        Set-Content `
+            -Path $DriveHealthReport `
+            -Encoding UTF8
+
+    Write-Host "Diagnostic report:"
+    Write-Host "  $DriveHealthReport"
+    Write-Host ""
+
+    if (Confirm-Action "Open Windows Disk Management for a visual view of this drive?") {
+        Start-Process diskmgmt.msc
+    }
+}
+
+function Show-ExternalDriveHealthMenu {
+
+    while ($true) {
+
+        Write-Section "EXTERNAL DRIVE HEALTH"
+
+        Write-Host "1 - Diagnose attached external HDD / SSD / USB storage"
+        Write-Host "2 - Show all disks and volumes"
+        Write-Host "3 - Open Disk Management"
+        Write-Host "4 - Return"
+        Write-Host ""
+
+        $DriveChoice = Read-Host "Choose 1, 2, 3, or 4"
+
+        switch ($DriveChoice) {
+
+            "1" {
+                Show-ExternalDriveDiagnosis
+                Read-Host "Press Enter to continue"
+            }
+
+            "2" {
+
+                Write-Host ""
+                Write-Host "Disks:"
+                Write-Host ""
+
+                Get-Disk `
+                    -ErrorAction SilentlyContinue |
+                    Select-Object `
+                        Number,
+                        FriendlyName,
+                        SerialNumber,
+                        BusType,
+                        PartitionStyle,
+                        OperationalStatus,
+                        HealthStatus,
+                        IsOffline,
+                        IsReadOnly,
+                        Size |
+                    Format-Table -AutoSize
+
+                Write-Host ""
+                Write-Host "Volumes:"
+                Write-Host ""
+
+                Get-Volume `
+                    -ErrorAction SilentlyContinue |
+                    Select-Object `
+                        DriveLetter,
+                        FileSystemLabel,
+                        FileSystem,
+                        HealthStatus,
+                        OperationalStatus,
+                        SizeRemaining,
+                        Size |
+                    Format-Table -AutoSize
+
+                Read-Host "Press Enter to continue"
+            }
+
+            "3" {
+                Start-Process diskmgmt.msc
+            }
+
+            "4" {
+                return
+            }
+        }
+    }
+}
+
+
+# ============================================================
+# APPLE / MAC EXTERNAL DRIVE READER & RESCUE
+# ============================================================
+
+function Get-ApplePartitionClassification {
+
+    param(
+        [object]$Partition,
+        [object]$Volume
+    )
+
+    $GptType = ""
+    $FileSystem = ""
+
+    try { $GptType = ([string]$Partition.GptType).ToUpperInvariant() } catch {}
+    try { $FileSystem = ([string]$Volume.FileSystem).ToUpperInvariant() } catch {}
+
+    if ($GptType -eq "{7C3457EF-0000-11AA-AA11-00306543ECAC}" -or
+        $GptType -eq "7C3457EF-0000-11AA-AA11-00306543ECAC") {
+        return "APFS"
+    }
+
+    if ($GptType -eq "{48465300-0000-11AA-AA11-00306543ECAC}" -or
+        $GptType -eq "48465300-0000-11AA-AA11-00306543ECAC") {
+        return "HFS/HFS+"
+    }
+
+    if ($GptType -eq "{426F6F74-0000-11AA-AA11-00306543ECAC}" -or
+        $GptType -eq "426F6F74-0000-11AA-AA11-00306543ECAC") {
+        return "Apple Boot"
+    }
+
+    if ($FileSystem -in @("EXFAT","FAT","FAT32","NTFS","REFS")) {
+        return "Windows-readable"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($FileSystem)) {
+        return "Unknown/unsupported"
+    }
+
+    return $FileSystem
+}
+
+function Get-InstalledAppleFilesystemTools {
+
+    $Matches = New-Object System.Collections.Generic.List[object]
+
+    $RegistryPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+
+    foreach ($Path in $RegistryPaths) {
+        try {
+            Get-ItemProperty -Path $Path -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.DisplayName -and
+                    $_.DisplayName -match 'Paragon|APFS|HFS|MacDrive|Mac Disk|MacDisk'
+                } |
+                ForEach-Object {
+                    $Matches.Add(
+                        [PSCustomObject]@{
+                            Name    = $_.DisplayName
+                            Version = $_.DisplayVersion
+                        }
+                    )
+                }
+        }
+        catch {
+        }
+    }
+
+    return @($Matches | Sort-Object Name, Version -Unique)
+}
+
+function Get-ReadableExternalVolumes {
+
+    $Items = New-Object System.Collections.Generic.List[object]
+
+    foreach ($Disk in @(Get-ExternalDiskCandidates)) {
+
+        try {
+            $Partitions = @(Get-Partition -DiskNumber $Disk.Number -ErrorAction SilentlyContinue)
+
+            foreach ($Partition in $Partitions) {
+
+                $Volume = $null
+                try { $Volume = Get-Volume -Partition $Partition -ErrorAction SilentlyContinue } catch {}
+
+                if (
+                    $null -ne $Volume -and
+                    $Volume.DriveLetter -and
+                    -not [string]::IsNullOrWhiteSpace([string]$Volume.FileSystem)
+                ) {
+                    $Items.Add(
+                        [PSCustomObject]@{
+                            DiskNumber      = $Disk.Number
+                            DiskName        = $Disk.FriendlyName
+                            PartitionNumber = $Partition.PartitionNumber
+                            DriveLetter     = [string]$Volume.DriveLetter
+                            FileSystem      = [string]$Volume.FileSystem
+                            Label           = [string]$Volume.FileSystemLabel
+                            Size            = [long]$Volume.Size
+                            Classification  = Get-ApplePartitionClassification -Partition $Partition -Volume $Volume
+                        }
+                    )
+                }
+            }
+        }
+        catch {
+        }
+    }
+
+    return @($Items)
+}
+
+function Show-AppleDriveDetection {
+
+    Write-Section "APPLE / MAC EXTERNAL DRIVE DETECTION"
+
+    $ExternalDisks = @(Get-ExternalDiskCandidates)
+
+    if ($ExternalDisks.Count -eq 0) {
+        Write-Warning "No external disks are currently exposed by Windows Storage Management."
+        Write-Host ""
+        Write-Host "If the drive powers on but does not appear here, use:"
+        Write-Host "  External Drive Health / Diagnosis"
+        Write-Host "to check whether Windows can see the USB/enclosure hardware."
+        return
+    }
+
+    foreach ($Disk in $ExternalDisks) {
+
+        Write-Host "------------------------------------------------------------"
+        Write-Host "Disk $($Disk.Number): $($Disk.FriendlyName)"
+        Write-Host "Bus: $($Disk.BusType)"
+        Write-Host "Size: $(Format-Bytes ([long]$Disk.Size))"
+        Write-Host "Partition style: $($Disk.PartitionStyle)"
+        Write-Host ""
+
+        $Partitions = @()
+
+        try {
+            $Partitions = @(Get-Partition -DiskNumber $Disk.Number -ErrorAction SilentlyContinue)
+        }
+        catch {
+        }
+
+        if ($Partitions.Count -eq 0) {
+            Write-Host "No partitions exposed by Windows."
+            Write-Host ""
+            continue
+        }
+
+        foreach ($Partition in $Partitions) {
+
+            $Volume = $null
+            try { $Volume = Get-Volume -Partition $Partition -ErrorAction SilentlyContinue } catch {}
+
+            $Class = Get-ApplePartitionClassification -Partition $Partition -Volume $Volume
+
+            $DriveLetter = ""
+            $FileSystem = ""
+            $Label = ""
+
+            if ($null -ne $Volume) {
+                $DriveLetter = [string]$Volume.DriveLetter
+                $FileSystem = [string]$Volume.FileSystem
+                $Label = [string]$Volume.FileSystemLabel
+            }
+
+            Write-Host "Partition $($Partition.PartitionNumber)"
+            Write-Host "  Classification: $Class"
+            Write-Host "  GPT type:       $($Partition.GptType)"
+            Write-Host "  File system:    $FileSystem"
+            Write-Host "  Drive letter:   $DriveLetter"
+            Write-Host "  Label:          $Label"
+            Write-Host ""
+
+            if ($Class -eq "APFS" -or $Class -eq "HFS/HFS+") {
+                if ([string]::IsNullOrWhiteSpace($DriveLetter)) {
+                    Write-Host "  Windows detected an Apple-style partition but has not mounted it."
+                    Write-Host "  DO NOT FORMAT IT if you need the data."
+                    Write-Host ""
+                }
+            }
+        }
+    }
+}
+
+function Select-ReadableExternalVolume {
+
+    $Volumes = @(Get-ReadableExternalVolumes)
+
+    if ($Volumes.Count -eq 0) {
+        Write-Warning "No readable external volumes with drive letters are currently available."
+        return $null
+    }
+
+    Write-Host ""
+    Write-Host "Readable external volumes:"
+    Write-Host ""
+
+    for ($i = 0; $i -lt $Volumes.Count; $i++) {
+        $V = $Volumes[$i]
+
+        Write-Host ("[{0}] {1}:\  {2}  {3}  {4}  {5}" -f `
+            ($i + 1),
+            $V.DriveLetter,
+            $V.Label,
+            $V.FileSystem,
+            $V.Classification,
+            (Format-Bytes $V.Size)
+        )
+    }
+
+    Write-Host ""
+    $ChoiceText = Read-Host "Choose a volume number"
+
+    $ChoiceNumber = 0
+
+    if (-not [int]::TryParse($ChoiceText, [ref]$ChoiceNumber)) {
+        return $null
+    }
+
+    if ($ChoiceNumber -lt 1 -or $ChoiceNumber -gt $Volumes.Count) {
+        return $null
+    }
+
+    return $Volumes[$ChoiceNumber - 1]
+}
+
+function Backup-ReadableExternalVolumeToDesktop {
+
+    $Selected = Select-ReadableExternalVolume
+
+    if ($null -eq $Selected) {
+        return
+    }
+
+    $Source = "$($Selected.DriveLetter):\"
+    $DesktopPath = [Environment]::GetFolderPath("Desktop")
+    $SafeLabel = $Selected.Label
+
+    if ([string]::IsNullOrWhiteSpace($SafeLabel)) {
+        $SafeLabel = "Drive-$($Selected.DriveLetter)"
+    }
+
+    $SafeLabel = $SafeLabel -replace '[\\/:*?"<>|]', '_'
+
+    $Destination = Join-Path `
+        $DesktopPath `
+        ("Mac-Drive-Backup-{0}-{1}" -f $SafeLabel, (Get-Date -Format "yyyy-MM-dd_HH-mm-ss"))
+
+    Write-Host ""
+    Write-Host "Source:"
+    Write-Host "  $Source"
+    Write-Host ""
+    Write-Host "Backup destination:"
+    Write-Host "  $Destination"
+    Write-Host ""
+    Write-Host "This is COPY-ONLY. Original files will not be moved or deleted."
+    Write-Host ""
+
+    if (-not (Confirm-Action "Begin full readable-volume backup?")) {
+        return
+    }
+
+    New-Item `
+        -ItemType Directory `
+        -Path $Destination `
+        -Force `
+        -ErrorAction Stop | Out-Null
+
+    $Log = Join-Path $Destination "robocopy-backup-log.txt"
+
+    Write-Host ""
+    Write-Host "Copying accessible files..."
+    Write-Host "Large drives can take a long time."
+    Write-Host ""
+
+    & robocopy.exe `
+        "$Source" `
+        "$Destination" `
+        /E `
+        /COPY:DAT `
+        /DCOPY:T `
+        /R:1 `
+        /W:1 `
+        /XJ `
+        /FFT `
+        /TEE `
+        /LOG:"$Log"
+
+    $RoboExit = $LASTEXITCODE
+
+    Write-Host ""
+    Write-Host "Robocopy exit code: $RoboExit"
+    Write-Host "Backup log:"
+    Write-Host "  $Log"
+    Write-Host ""
+
+    if ($RoboExit -le 7) {
+        Write-Host "Backup completed without a fatal Robocopy error."
+    }
+    else {
+        Write-Warning "Robocopy reported one or more failures. Review the backup log."
+    }
+
+    if (Confirm-Action "Open the backup folder?") {
+        Start-Process explorer.exe "`"$Destination`""
+    }
+}
+
+function Show-AppleFilesystemSupport {
+
+    Write-Section "APPLE FILESYSTEM SUPPORT"
+
+    Write-Host "Windows can normally read exFAT/FAT/NTFS volumes directly."
+    Write-Host ""
+    Write-Host "APFS and HFS/HFS+ commonly require additional Windows filesystem software."
+    Write-Host "PC Maintenance does not install or bundle proprietary filesystem drivers."
+    Write-Host ""
+
+    $Tools = @(Get-InstalledAppleFilesystemTools)
+
+    if ($Tools.Count -eq 0) {
+        Write-Host "No obvious third-party APFS/HFS filesystem package was detected."
+    }
+    else {
+        Write-Host "Possible Apple filesystem tools detected:"
+        Write-Host ""
+
+        $Tools |
+            Format-Table Name, Version -AutoSize
+    }
+
+    Write-Host ""
+    Write-Host "If an Apple partition is detected but has no drive letter:"
+    Write-Host "1. Do NOT initialize or format it if the files matter."
+    Write-Host "2. Diagnose the hardware first."
+    Write-Host "3. Use a compatible read-capable APFS/HFS solution or connect the drive to a Mac."
+    Write-Host "4. Once Windows exposes a drive letter, PC Maintenance can search and copy its files."
+    Write-Host ""
+}
+
+function Show-AppleDriveReaderMenu {
+
+    while ($true) {
+
+        Write-Section "APPLE / MAC EXTERNAL DRIVE READER & RESCUE"
+
+        Write-Host "Read/search/backup first. This section does not format Apple drives."
+        Write-Host ""
+        Write-Host "1 - Detect Apple / Mac-formatted external drives"
+        Write-Host "2 - Diagnose external drive hardware / health"
+        Write-Host "3 - Open a readable external volume"
+        Write-Host "4 - Search readable drives for files / lost files"
+        Write-Host "5 - Search readable drives for photos / photo backup"
+        Write-Host "6 - Search readable drives for code / projects"
+        Write-Host "7 - Back up an entire readable external volume to Desktop"
+        Write-Host "8 - Check APFS / HFS Windows support"
+        Write-Host "9 - Open Disk Management"
+        Write-Host "10 - Return"
+        Write-Host ""
+
+        $AppleChoice = Read-Host "Choose 1 through 10"
+
+        switch ($AppleChoice) {
+
+            "1" {
+                Show-AppleDriveDetection
+                Read-Host "Press Enter to continue"
+            }
+
+            "2" {
+                Show-ExternalDriveDiagnosis
+                Read-Host "Press Enter to continue"
+            }
+
+            "3" {
+                $Selected = Select-ReadableExternalVolume
+
+                if ($null -ne $Selected) {
+                    Start-Process explorer.exe "$($Selected.DriveLetter):\"
+                }
+            }
+
+            "4" {
+                Write-Host ""
+                Write-Host "Use the Deep File Search tool and choose the external drive as the search scope."
+                Write-Host ""
+                Show-FileSearchMenu
+            }
+
+            "5" {
+                Show-DrivePhotoSearchMenu
+            }
+
+            "6" {
+                Show-ProjectCodeSearchMenu
+            }
+
+            "7" {
+                Backup-ReadableExternalVolumeToDesktop
+                Read-Host "Press Enter to continue"
+            }
+
+            "8" {
+                Show-AppleFilesystemSupport
+                Read-Host "Press Enter to continue"
+            }
+
+            "9" {
+                Start-Process diskmgmt.msc
+            }
+
+            "10" {
+                return
+            }
+        }
+    }
+}
+
 Clear-Host
 Write-Host "============================================================"
 Write-Host "          DESMOND PC MAINTENANCE $AppVersion"
@@ -1763,14 +3651,56 @@ Write-Host "3 - Full Maintenance"
 Write-Host "4 - Check for Program Updates"
 Write-Host "5 - File Conversion"
 Write-Host "6 - Deep File Search / Lost File Finder"
-Write-Host "7 - Exit"
+Write-Host "7 - Project / Code Search"
+Write-Host "8 - WSL / Linux Terminal Maintenance"
+Write-Host "9 - Speech Listener / Microphone"
+Write-Host "10 - Drive Photo Search / Desktop Backup"
+Write-Host "11 - External Drive Health / Diagnosis"
+Write-Host "12 - Apple / Mac External Drive Reader & Rescue"
+Write-Host "13 - Exit"
 Write-Host ""
 
 do {
-    $Choice = Read-Host "Choose 1, 2, 3, 4, 5, 6, or 7"
-} until ($Choice -in @("1","2","3","4","5","6","7"))
+    $Choice = Read-Host "Choose 1 through 13"
+} until ($Choice -in @("1","2","3","4","5","6","7","8","9","10","11","12","13"))
+
+if ($Choice -eq "13") {
+    try { Stop-Transcript | Out-Null } catch {}
+    exit
+}
+
+if ($Choice -eq "12") {
+    Show-AppleDriveReaderMenu
+    try { Stop-Transcript | Out-Null } catch {}
+    exit
+}
+
+if ($Choice -eq "11") {
+    Show-ExternalDriveHealthMenu
+    try { Stop-Transcript | Out-Null } catch {}
+    exit
+}
+
+if ($Choice -eq "10") {
+    Show-DrivePhotoSearchMenu
+    try { Stop-Transcript | Out-Null } catch {}
+    exit
+}
+
+if ($Choice -eq "9") {
+    Show-SpeechListenerMenu
+    try { Stop-Transcript | Out-Null } catch {}
+    exit
+}
+
+if ($Choice -eq "8") {
+    Show-LinuxMaintenanceMenu
+    try { Stop-Transcript | Out-Null } catch {}
+    exit
+}
 
 if ($Choice -eq "7") {
+    Show-ProjectCodeSearchMenu
     try { Stop-Transcript | Out-Null } catch {}
     exit
 }

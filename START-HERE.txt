@@ -1,5 +1,5 @@
 PC MAINTENANCE U - START HERE
-Version 2.6.0
+Version 3.0.0
 
 NORMAL USE
 
@@ -20,7 +20,15 @@ MAIN MENU
 4 - Check for Program Updates
 5 - File Conversion
 6 - Deep File Search / Lost File Finder
-7 - Exit
+7 - Project / Code Search
+8 - WSL / Linux Terminal Maintenance
+9 - Speech Listener / Microphone
+10 - Drive Photo Search / Desktop Backup
+
+11 - External Drive Health / Diagnosis
+
+12 - Apple / Mac External Drive Reader & Rescue
+13 - Exit
 
 AUTOMATIC UPDATES
 
@@ -30,63 +38,65 @@ https://github.com/3750449/PC-Maintenance-U
 If version.txt on GitHub contains a newer version, the update is downloaded,
 validated, backed up, and installed before PC Maintenance starts.
 
-MICROSOFT PUBLISHER RESCUE
+PROJECT / CODE SEARCH
 
-Version 2.6.0 adds dedicated Microsoft Publisher .pub support.
+Designed to locate old programming projects even when you do not remember the
+exact folder. It can search using:
+- Project, folder, or source filename clues
+- Old path/folder-origin clues
+- Programming language / code type
+- Libraries, imports, includes, class names, function names, algorithms,
+  comments, README terms, or purpose keywords
+- Project markers such as .git, CMakeLists.txt, package.json, requirements.txt,
+  pyproject.toml, Cargo.toml, pom.xml, build.gradle, Makefile, Dockerfile, etc.
 
-File Conversion -> Microsoft Publisher Rescue can:
-- Convert one .pub file to PDF
-- Convert one .pub file to XPS when Microsoft Publisher is installed
-- Convert one .pub file to DOCX as a best-effort editing copy
-- Batch convert a folder (and optionally subfolders) of .pub files to PDF
+Matches are grouped into likely project roots, ranked, and exported to CSV.
+The search can open a selected project folder directly in Explorer.
 
-The program tries Microsoft Publisher first when available. For PDF/ODG it can
-fall back to LibreOffice when LibreOffice supports that Publisher file. DOCX is
-created through a PDF intermediate and Microsoft Word, so complex page layouts
-can change.
+The purpose search is keyword/content based. It can find concepts described in
+README files, comments, names, imports, and code, but it is not an AI semantic
+index of every project.
 
-Deep File Search / Lost File Finder now includes:
-- Find Microsoft Publisher Files (.pub)
+WSL / LINUX TERMINAL MAINTENANCE
 
-That search can scan your user folder, all accessible drives, or a chosen folder.
-It can help locate Publisher files that were moved into unexpected folders.
+The Linux menu can:
+- Show WSL status and installed distributions
+- Check Linux package updates
+- Update a selected Linux distribution
+- Update the Windows WSL engine/kernel
+- Open a selected WSL distribution terminal
 
-GENERAL FILE CONVERSION
+Supported package managers:
+apt, dnf, yum, pacman, zypper
+
+A Linux sudo password may be requested by the distribution during updates.
+
+SPEECH LISTENER / MICROPHONE
+
+The Speech Listener can:
+- List built-in and attached Windows audio endpoints
+- Listen for 15, 30, or 60 seconds through the current default Windows input
+- Save recognized speech and confidence values to a CSV report
+- Open Windows Sound settings so a USB/Bluetooth headset or external mic can be
+  made the default recording device
+
+The listener is opt-in. It does not secretly stay running or continuously
+record in the background after the listening session ends.
+
+FILE CONVERSION
 
 The converter is engine-based. Built-in Windows support handles common images,
 CSV/JSON, text-like files, and Office-to-PDF when Microsoft Office is installed.
+Publisher rescue includes .pub discovery/conversion support.
 
-If these programs are installed, PC Maintenance automatically uses them:
-- FFmpeg: broad audio/video conversion
-- ImageMagick: broad image conversion
-- LibreOffice: broad office/document conversion and some Publisher imports
-- Pandoc: document/text/markup conversion
-- 7-Zip: archive extraction/repacking to ZIP
-
-No converter can safely convert every possible proprietary file format. If no
-safe conversion engine is available, the original file is left untouched.
+Optional engines detected automatically include FFmpeg, ImageMagick,
+LibreOffice, Pandoc, and 7-Zip.
 
 DEEP FILE SEARCH / LOST FILE FINDER
 
-The search tool can:
-- Search your user folder or all accessible drives
-- Search hidden files
-- Search partial filenames
-- Search wildcards
-- Fuzzy-rank approximate/misspelled filenames
-- Use an old full path as a clue
-- Filter by extension
-- Filter by minimum/maximum size
-- Use approximate size as a ranking clue
-- Filter by modified date
-- Find recently modified files when the filename is unknown
-- Find Microsoft Publisher .pub files specifically
-- Save complete search results to CSV
-- Reveal a selected result directly in Windows Explorer
-- Skip reparse-point directory loops
-
-This is a file finder, not deleted-file recovery software. A file that has been
-permanently deleted may require a separate recovery tool.
+Supports partial filenames, wildcards, fuzzy filename ranking, old path clues,
+extensions, size/date filters, all-drive searches, hidden files, Publisher .pub
+search, CSV result reports, and Explorer reveal.
 
 KEEP THESE FILES TOGETHER
 
@@ -94,3 +104,47 @@ PC-Maintenance.ps1
 Run-PC-Maintenance.bat
 Update-PC-Maintenance.ps1
 version.txt
+
+
+DRIVE PHOTO SEARCH / DESKTOP BACKUP
+
+Use menu option 10 to search for photos on internal drives, USB drives,
+external storage, accessible network drives, or a selected folder.
+
+The program can make a dated backup on the current Windows user's Desktop.
+
+Example:
+Desktop\Photo-Backup-2026-11-08_09-30-00
+
+The backup COPIES files. It does not move or delete the originals.
+A CSV manifest is created inside the backup folder.
+
+
+EXTERNAL DRIVE HEALTH / DIAGNOSIS
+
+Use menu option 11 for an external HDD, SSD, USB flash drive, or storage
+connected through a USB enclosure/adapter.
+
+The default diagnosis is read-only. It does not initialize, format, erase,
+or automatically repair the drive.
+
+It checks whether Windows sees the disk, partitions, filesystem, health state,
+and SMART/reliability information when the enclosure exposes it.
+
+If Windows asks to FORMAT a drive containing important data, choose Cancel
+until you know what filesystem and failure state the drive has.
+
+
+APPLE / MAC EXTERNAL DRIVE READER & RESCUE
+
+Use menu option 12 for an external drive that was formatted or used on a Mac.
+
+It can detect known APFS/HFS+ partition types, diagnose the external-drive
+hardware, open readable external volumes, search accessible files/photos/code,
+and make a copy-only Desktop backup of a readable external volume.
+
+If Windows asks to FORMAT the Mac drive and its data matters, choose Cancel.
+
+PC Maintenance does not bundle proprietary APFS/HFS Windows drivers. If Windows
+detects the Apple partition but does not mount it, use a compatible reader or
+connect the drive to a Mac first.
